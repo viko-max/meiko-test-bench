@@ -4,6 +4,8 @@ Meiko Test-Bench 是一个基于 Pi 的多学科模型测评工具。它将题�
 
 **Creative Is All You Need**
 
+由 Meiko 开发，OpenAI Codex 参与开发。
+
 ## 开始使用
 
 需要 Node.js 22.19 或更高版本。若使用 Python 答题工具，另需 Python 3.11 或更高版本。以下示例适用于 Windows PowerShell。
@@ -47,7 +49,7 @@ pyenv/.venv/Scripts/python.exe -m pip install -r pyenv/requirements.txt
 
 ## 贡献与验证
 
-代码贡献者需要能够使用 **Codex**。提交流程见 [贡献指南](CONTRIBUTING.md)，开发约束见 [AGENTS.md](AGENTS.md)。
+欢迎参与贡献。提交流程见 [贡献指南](CONTRIBUTING.md)，开发约束见 [AGENTS.md](AGENTS.md)。
 
 ```powershell
 npm run typecheck

@@ -1,6 +1,6 @@
 # Meiko Test-Bench 项目规范
 
-本文件适用于整个仓库。代码贡献者需要能够使用 Codex，并按 [贡献指南](CONTRIBUTING.md) 核对改动和验证结果。
+本文件适用于整个仓库。请按 [贡献指南](CONTRIBUTING.md) 核对改动和验证结果。
 
 ## 目录和数据
 
