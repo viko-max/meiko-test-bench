@@ -1,0 +1,19 @@
+{
+  "$comment": "Protection limits to prevent runaway cost/time. Values are defaults to be tuned after small trial runs (v0.2 §9). Over-limit MUST be flagged, never silently truncated into a normal answer sheet.",
+  "version": "1",
+  "request": {
+    "maxRetries": 0,
+    "requestTimeoutMs": 120000,
+    "maxOutputTokens": 8192
+  },
+  "perTrial": {
+    "totalRunTimeMs": 600000,
+    "maxTurns": 40,
+    "maxToolCalls": 60
+  },
+  "perToolCall": {
+    "timeoutMs": 60000,
+    "maxOutputBytes": 262144,
+    "maxImagePixels": 4096
+  }
+}

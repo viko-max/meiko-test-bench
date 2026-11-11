@@ -1,0 +1,40 @@
+{
+  "name": "meiko-test-bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Meiko Test-Bench: a TypeScript multi-subject model evaluation harness built on Pi, with separate without-tool and with-tool results.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build",
+    "test": "vitest run --fileParallelism=false",
+    "pretest:watch": "npm run build",
+    "test:watch": "vitest --fileParallelism=false",
+    "tui": "tsx src/tui/main.ts",
+    "cli": "tsx src/tui/cli.ts",
+    "accept": "tsx src/accept.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-agent-core": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
+    "sharp": "^0.33.5",
+    "unified": "^11.0.4",
+    "remark-parse": "^11.0.0",
+    "remark-frontmatter": "^5.0.0",
+    "remark-stringify": "^11.0.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

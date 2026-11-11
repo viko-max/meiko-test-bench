@@ -1,0 +1,16 @@
+# Meiko-TestBench compute environment (Python 3.11.9)
+#
+# The project venv (pyenv/.venv) is created with `include-system-site-packages = true`
+# so it reuses the host Python 3.11.9 libraries already installed system-wide
+# (same approach as the sibling science_bench project). This avoids a slow/failing
+# `pip install` on this host. Versions below are the ones actually importable from
+# the venv (verified 2026-10-08).
+
+numpy==2.4.6
+sympy==1.14.0
+mpmath==1.3.0
+pillow==12.2.0
+
+# Optional / not installed here (install if a question needs it):
+#   scipy        # MISSING on host; pip install is currently hanging on this host's PyPI access
+#   matplotlib   # 3.11.0 available system-wide (not pinned here)

@@ -1,0 +1,17 @@
+{
+  "$comment": "Independent scoring spec. Never placed in the answer request, tool input, or .work. Linked to the question by (questionId, questionVersion).",
+  "questionId": "subj-nnn",
+  "questionVersion": "1",
+  "scoringVersion": "1",
+  "answerKind": "numeric_unit",
+  "maxScore": 10,
+  "reference": "6 N",
+  "rubric": [
+    { "partLabel": "1", "points": 10, "evidence": "correct value with unit", "acceptAlternatives": [] }
+  ],
+  "tolerance": 0.01,
+  "units": ["N"],
+  "acceptableAlternatives": [],
+  "reviewConditions": "ambiguous unit or missing value -> pending_human_review",
+  "deterministicLocked": true
+}

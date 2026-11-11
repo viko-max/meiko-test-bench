@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "profileId": "example-judge-profile",
+  "modelId": "example-judge-model",
+  "thinkingLevel": "off",
+  "maxTotalTokens": 50000,
+  "limits": {
+    "requestTimeoutMs": 120000,
+    "maxOutputTokens": 2048,
+    "totalRunTimeMs": 180000,
+    "maxTurns": 1,
+    "maxToolCalls": 1,
+    "perToolTimeoutMs": 60000,
+    "maxOutputBytes": 262144,
+    "maxImagePixels": 16777216
+  }
+}

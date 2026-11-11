@@ -1,0 +1,13 @@
+{
+  "questionId": "demo-physics",
+  "questionVersion": "1",
+  "scoringVersion": "1",
+  "answerKind": "numeric_unit",
+  "maxScore": 1,
+  "reference": "3 m/s^2",
+  "tolerance": 0.000001,
+  "units": ["m/s^2"],
+  "acceptableAlternatives": [],
+  "reviewConditions": "单位或数值歧义时人工复核",
+  "deterministicLocked": true
+}

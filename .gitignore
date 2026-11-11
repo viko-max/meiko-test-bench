@@ -1,0 +1,28 @@
+# Dependencies and generated output
+/node_modules/
+/dist/
+*.tsbuildinfo
+/pyenv/.venv/
+__pycache__/
+*.pyc
+
+# Local evaluation data and configuration
+/runs/
+/chats/
+/.work/
+/.import/
+/configs/models.json
+/datasets/*
+!/datasets/demo/
+/datasets/demo/source/
+/datasets/demo/snapshots/
+
+# Credentials and local editor files
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

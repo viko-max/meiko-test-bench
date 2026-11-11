@@ -1,0 +1,18 @@
+{
+  "$comment": "Local tool execution environment. First version: local subprocess, NOT strong isolation (AGENTS.md §9). Python uses the project-local venv at pyenv/.venv (created in Phase 4 with authorization).",
+  "version": "1",
+  "python": {
+    "interpreter": "pyenv/.venv/Scripts/python.exe",
+    "requirementsFile": "pyenv/requirements.txt"
+  },
+  "typescript": {
+    "compiler": "node_modules/.bin/tsc",
+    "runner": "node"
+  },
+  "isolation": {
+    "mode": "local-subprocess",
+    "stripApiKeyEnvVars": true,
+    "strongIsolation": false,
+    "networkEnforced": false
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "$comment": "Copy to models.json for local configuration. Use environment variable names for authentication.",
+  "version": "1",
+  "profiles": [
+    {
+      "id": "spark",
+      "displayName": "Spark X2.6 (official)",
+      "provider": "xfyun-spark",
+      "api": "openai-completions",
+      "baseUrl": "https://maas-api.cn-huabei-1.xf-yun.com/v2",
+      "auth": { "envVars": ["PI_EXAM_SPARK_API_KEY"] },
+      "models": [
+        { "id": "spark-x2.6", "name": "Spark X2.6", "input": ["text"], "reasoning": true, "contextWindow": 1000000, "maxTokens": 8192 }
+      ],
+      "capability": {
+        "text": "verified",
+        "imageInput": "unsupported",
+        "toolCalling": "unverified",
+        "imageToolResult": "unsupported",
+        "usage": "verified",
+        "nativeWebSearch": "verified",
+        "verificationEvidence": "文本和用量在 Spark X2.6 官方 MaaS 接口的接入验收中已确认。官方 Chat 协议见 https://maas.xfyun.cn/doc/guide/3%E3%80%81API%20%E6%8E%A5%E5%8F%A3/3.1%20%E6%98%9F%E7%81%AB%E6%A8%A1%E5%9E%8B%20API/3.1.1%20Chat.html 。原生搜索依据官方文档，属于协议核实，不是本 Harness 的真实请求验证。"
+      }
+    },
+    {
+      "id": "longcat",
+      "displayName": "LongCat 2.5 Preview",
+      "provider": "longcat",
+      "api": "openai-completions",
+      "baseUrl": "https://api.longcat.chat/openai/v1",
+      "auth": { "envVars": ["PI_EXAM_LONGCAT_API_KEY"] },
+      "models": [
+        { "id": "LongCat-2.5-Preview", "name": "LongCat 2.5 Preview", "input": ["text", "image"], "reasoning": true, "contextWindow": 1000000, "maxTokens": 131072 }
+      ],
+      "capability": {
+        "text": "verified",
+        "imageInput": "unsupported",
+        "toolCalling": "unverified",
+        "imageToolResult": "unverified",
+        "usage": "verified",
+        "nativeWebSearch": "unverified",
+        "verificationEvidence": "2026-10-08 对此模型及端点的实际接入探测确认了文本与用量回执。图片请求未确认有效视觉处理，按不支持图片测评处理。"
+      }
+    },
+    {
+      "id": "compat-openai-example",
+      "displayName": "Custom OpenAI-compatible endpoint (example)",
+      "provider": "my-compat",
+      "api": "openai-completions",
+      "baseUrl": "https://example.invalid/v1",
+      "auth": { "envVars": ["PI_EXAM_MY_COMPAT_API_KEY"] },
+      "models": [
+        { "id": "my-model-id", "name": "My Model", "input": ["text"], "reasoning": false, "contextWindow": 128000, "maxTokens": 8192 }
+      ]
+    }
+  ]
+}
