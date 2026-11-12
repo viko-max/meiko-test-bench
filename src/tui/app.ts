@@ -32,6 +32,7 @@ import { summarizeRequests } from "../shared/metrics.js";
 import { CollectionView } from "./collection-view.js";
 import { ChatView } from "./chat-view.js";
 import { MASCOT_ACCENTS, mascotStatus, runtimeStatusLine } from "./mascot-status.js";
+import { OFFLINE_DEMO_LABEL } from "../shared/offline-demo.js";
 
 // ── ANSI styling (terminals render these; visibleWidth keeps padding correct) ──
 const S = {
@@ -108,7 +109,7 @@ export class ExamApp implements Component {
   private fieldInput?: Input;
   private draftEditor?: { field: DraftEditField; component: Editor };
   private bodyRows = 20;
-  private readonly commands = new CommandBar();
+  private readonly commands: CommandBar;
   private commandTop = 0;
   private commandLeft = 0;
   private commandHeight = 0;
@@ -163,6 +164,7 @@ export class ExamApp implements Component {
   }
 
   constructor(private readonly tui: ExamTui) {
+    this.commands = new CommandBar((command) => !this.tui.demoSource || !["chat", "model", "collect", "judge"].includes(command));
     this.commands.onText = (text) => this.perform(async () => { await this.tui.stopChatAndWait(); this.tui.openChat(text); });
     this.commands.onExecute = (command) => {
       if (command === "quit") { void this.quit(); return; }
@@ -317,7 +319,7 @@ export class ExamApp implements Component {
     const accent = MASCOT_ACCENTS[colorway];
     const badge = mascotStatus(live);
     const badgeColor = badge.tone === "error" ? S.red : badge.tone === "warning" ? S.yellow : badge.tone === "success" ? S.green : accent;
-    const header = screen.kind === "home" ? [] : [paint(" " + PROJECT_NAME, S.bold, accent) + paint("  /  " + labels[screen.kind], S.gray) + (screen.kind === "run" ? paint(`  · ${badge.label}`, badgeColor) : ""), screen.kind === "run" ? paint(" " + badge.detail, S.gray) : ""];
+    const header = screen.kind === "home" ? [] : [paint(" " + PROJECT_NAME, S.bold, accent) + paint("  /  " + labels[screen.kind], S.gray) + (screen.kind === "run" ? paint(`  · ${badge.label}`, badgeColor) : ""), this.tui.demoSource ? paint(" " + OFFLINE_DEMO_LABEL, S.yellow) : screen.kind === "run" ? paint(" " + badge.detail, S.gray) : ""];
     // 首页角色和字标独立于命令菜单；候选项只占据右下输入区。
     const heroRows = Math.max(1, height - 3 - footer.length - (KEYDEBUG ? 1 : 0));
     const home = screen.kind === "home" ? this.homeLayout(screen, w, heroRows) : undefined;
@@ -418,7 +420,7 @@ export class ExamApp implements Component {
     if (s.kind === "run") return "↑↓/点击 选择 · Enter 请求明细 · Esc 返回 · s 停止 · / 命令";
     if (s.kind === "setup") return "↑↓/点击 选提供商 · enter 进入模型 · q 退出";
     if (s.kind === "pickmodel") return "↑↓/点击 选模型 · enter 确认 · esc 返回提供商 · m 模式 · +/- 并发 · a API";
-    if (s.kind === "confirm") return s.recoveryDecision ? "Enter 明确补答一次（可能计费） · ↑↓ 阅读 · Esc 取消" : s.resume ? "Enter 确认续跑 · Esc 返回记录 · ↑↓ 阅读 · 未知结果不重发" : "Enter 开始(计费) · Esc 返回 · b 预算 · m 模式 · t 推理 · +/- 并发 · a API";
+    if (s.kind === "confirm") return this.tui.demoSource ? "Enter 执行离线演示 · Esc 返回 · ↑↓ 阅读 · m 模式" : s.recoveryDecision ? "Enter 明确补答一次（可能计费） · ↑↓ 阅读 · Esc 取消" : s.resume ? "Enter 确认续跑 · Esc 返回记录 · ↑↓ 阅读 · 未知结果不重发" : "Enter 开始(计费) · Esc 返回 · b 预算 · m 模式 · t 推理 · +/- 并发 · a API";
     if (s.kind === "report") return "m 切换 without_tool/with_tool · esc 返回 · q 退出";
     if (s.kind === "detail") return "↑↓ 浏览题目 · Enter 报告 · k 校准 · x 异常处理 · v 续跑 · Esc 历史";
     if (s.kind === "exceptions") return "n/p 换题 · ↑↓ 阅读 · c 决定人 · e 原因 · u 核对用量 · Enter 补答确认 · Esc 返回";
@@ -633,7 +635,8 @@ export class ExamApp implements Component {
         break;
       }
       case "setup": {
-        lines.push(paint(" 选择提供商", S.bold, S.yellow) + paint("  (pi 内置目录 + 自定义端点 · ↑↓/点击)", S.gray));
+        const catalog = this.tui.demoSource ? "  (本地脚本 · 无需 API Key)" : "  (pi 内置目录 + 自定义端点 · ↑↓/点击)";
+        lines.push(paint(" 选择提供商", S.bold, S.yellow) + paint(catalog, S.gray));
         const gs = screen.groups;
         this.windowedList(lines, gs.length, screen.providerIndex, Math.max(5, rows - 12), (i, sel) => {
           const g = gs[i]!;
@@ -683,21 +686,24 @@ export class ExamApp implements Component {
         if (screen.recoveryDecision) {
           const d = screen.recoveryDecision;
           lines.push(`   仅补答 ${d.questionId}；其余题不发送请求。`, terminalText(`   决定人 ${d.by} · 原因 ${d.reason}`),
-            "   原请求可能已计费。此次补答写入新任务，不覆盖原答卷，不取最好成绩。");
+            this.tui.demoSource ? "   补答写入新演示任务，保留原记录。" : "   原请求可能已计费。此次补答写入新任务，不覆盖原答卷，不取最好成绩。");
         }
         const body = wrapTextWithAnsi(lines.splice(1).join("\n"), this.width);
         const room = Math.max(1, this.bodyRows - 4);
         this.scrollTop = Math.min(this.scrollTop, Math.max(0, body.length - room));
         lines.push(...body.slice(this.scrollTop, this.scrollTop + room));
         lines.push(paint(` ↑↓ 阅读 ${this.scrollTop + 1}–${Math.min(body.length, this.scrollTop + room)}/${body.length}`, S.gray));
-        this.action(lines, screen.recoveryDecision ? "✔ 明确补答一次（可能再次计费）" : screen.resume ? "✔ 确认续跑（新请求可能计费）" : "✔ 开始任务（真实计费）", () => this.onStart(), S.green);
+        const startLabel = this.tui.demoSource ? (screen.resume ? "✔ 续跑离线演示" : "✔ 执行离线演示")
+          : screen.recoveryDecision ? "✔ 明确补答一次（可能再次计费）" : screen.resume ? "✔ 确认续跑（新请求可能计费）" : "✔ 开始任务（真实计费）";
+        this.action(lines, startLabel, () => this.onStart(), S.green);
         this.action(lines, "← 返回", () => this.tui.backToModels(), S.gray);
         break;
       }
       case "run": {
         const st = this.tui.getState();
         const status = this.tui.getService().getStatus(screen.taskId);
-        const label = status?.state === "error" ? "任务失败" : status?.state === "budget_paused" ? "预算保护已暂停（记录已保存）" : status?.state === "done" ? "任务完成" : status?.state === "stopped" ? "已请求停止" : "运行中";
+        const stopSaved = status?.state === "stopped" && status.events.at(-1)?.type === "task_done";
+        const label = status?.state === "error" ? "任务失败" : status?.state === "budget_paused" ? "预算保护已暂停（记录已保存）" : status?.state === "done" ? "任务完成" : stopSaved ? "已停止（记录已保存）" : status?.state === "stopped" ? "已请求停止" : "运行中";
         lines.push(paint(` ${label} task=${screen.taskId}`, S.bold, status?.state === "error" ? S.red : S.green) + (st.message ? paint("  · " + st.message, S.yellow) : ""));
         if (status?.error) lines.push(paint("   " + status.error, S.red));
         this.action(lines, "■ 停止任务", () => this.tui.stop(), S.red);
@@ -746,10 +752,11 @@ export class ExamApp implements Component {
         if (screen.tasks.length === 0) lines.push(paint("   (无)", S.gray));
         this.windowedList(lines, screen.tasks.length, this.menuIndex, Math.max(5, rows - 9), (i, sel) => {
           const t = screen.tasks[i]!;
+          const mode = t.mode ? `${t.mode} · ` : "";
           this.row(lines, sel, t.runId, () => {
             this.menuIndex = i;
             return this.tui.openDetail(t.runId);
-          }, paint(`${t.trialCount} 题${t.hasReport ? " · 有报告" : ""}${t.historyIssue ? " · 时间未确认" : ""}`, S.gray));
+          }, paint(`${mode}${t.trialCount} 题${t.hasReport ? " · 有报告" : ""}${t.historyIssue ? " · 时间未确认" : ""}`, S.gray));
         }, "条");
         break;
       }
@@ -814,7 +821,7 @@ export class ExamApp implements Component {
       case "report": {
         const r = screen.report;
         const t = r.totals;
-        lines.push(paint(` 成绩 ${screen.mode}`, S.bold, S.yellow) + paint(`  · run=${screen.runId}`, S.gray));
+        lines.push(paint(` ${r.offlineDemo ? "演示成绩" : "成绩"} ${screen.mode}`, S.bold, S.yellow) + paint(`  · run=${screen.runId}`, S.gray));
         lines.push(`   确认得分：${paint(`${t.confirmedRaw} / ${t.confirmedMax}`, S.green, S.bold)}   (计划满分 ${paint(String(t.plannedMax), S.cyan)})`);
         lines.push(...coverageLines(r.coverage).flatMap((line) => wrapTextWithAnsi("   " + line, this.width)).map((line) => paint(line, S.gray)));
         if (r.metrics) {
@@ -909,7 +916,7 @@ export class ExamApp implements Component {
     if (check.warnings.length) lines.push(paint(`   ${check.warnings.length} 条未评分提示：可入库并收集答卷。`, S.yellow));
     lines.push("");
     this.action(lines, "逐题核对与编辑 [v]", () => this.tui.openDraftQuestion(d.draftId, Math.min(this.scrollTop, d.questions.length - 1)), S.cyan);
-    this.action(lines, "✔ 确认入库 (写入 datasets/)", () => this.tui.confirmImport(), S.green);
+    this.action(lines, "✔ 确认入库", () => this.tui.confirmImport(), S.green);
     this.action(lines, "归档草稿（保留文件）", () => this.tui.discardImport(), S.yellow);
   }
 
@@ -975,10 +982,10 @@ export class ExamApp implements Component {
     const detailRows = [
       paint(SLOGAN, S.cyan),
       "",
-      paint(message || "多学科模型测评", message ? S.yellow : S.gray),
+      paint(message || (this.tui.demoSource ? OFFLINE_DEMO_LABEL : "多学科模型测评"), message || this.tui.demoSource ? S.yellow : S.gray),
       paint("without tool  /  with tool", S.gray),
       `题集 ${paint(String(screen.datasets.length), S.white)} 个  ·  最近任务待复核 ${paint(String(screen.pendingReview), S.white)}`,
-      screen.datasets[0] ? paint(screen.datasets[0].id, S.gray) : paint("导入题目，开始第一次测评", S.gray),
+      screen.datasets[0] ? paint(screen.datasets[0].id, S.gray) : paint(this.tui.demoSource ? "/import 导入随附示例" : "导入题目，开始第一次测评", S.gray),
     ];
     const contentRows = Math.max(artWidth / 2, brand.lines.length + 1 + detailRows.length);
     const top = Math.max(0, Math.min(3, Math.floor((rows - contentRows) / 2), rows - 5 - brand.lines.length - 1 - detailRows.length));
@@ -1004,7 +1011,7 @@ export class ExamApp implements Component {
     lines.push(`   吉祥物动画：${screen.animation ? paint("开", S.green, S.bold) : paint("关", S.gray)}   ${paint("[enter/空格 切换]", S.gray)}`);
     lines.push(paint("   动画开关用于当前会话，重启后使用启动配置。", S.gray));
     lines.push("");
-    this.action(lines, "搜索与搜题模型配置", () => { this.tui.openCollection(); this.tui.getCollectionWorkspace().page = "settings"; });
+    if (!this.tui.demoSource) this.action(lines, "搜索与搜题模型配置", () => { this.tui.openCollection(); this.tui.getCollectionWorkspace().page = "settings"; });
     this.action(lines, "← 返回首页", () => this.tui.gotoHome());
   }
 
@@ -1464,6 +1471,10 @@ export class ExamApp implements Component {
   /** Prompt for a source path, then import it into a staged draft. */
   private editImportPath(): void {
     const input = new Input({ prompt: "导入路径(文件/文件夹)：" });
+    if (this.tui.demoSource) {
+      input.setValue(this.tui.demoSource);
+      input.handleInput("\x05");
+    }
     input.focused = true;
     input.onSubmit = (value) => {
       this.fieldInput = undefined;

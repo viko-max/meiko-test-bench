@@ -39,6 +39,8 @@ import type { AnySearchClient } from "../providers/anysearch.js";
 
 export type { ProviderGroup } from "../providers/pi-catalog.js";
 
+const STOP_PENDING = "已请求停止，等待进行中的请求结束并保存记录。";
+
 export interface ExamTuiConfig {
   chatRoot?: string;
   collectionClient?: (config: CollectionConfig, getApiKey: () => string | undefined) => AnySearchClient;
@@ -52,6 +54,7 @@ export interface ExamTuiConfig {
   limitsPath?: string;
   requestTimeoutMs?: number;
   registryOverride?: Registry; // tests inject faux
+  offlineDemo?: { sourcePath: string; registry: Registry };
   /** Real (paid) runs require this; a faux registryOverride (tests) is exempt. */
   authorisePaid?: boolean;
   /** Play the intro animation (Next_Plan §2). Default true; toggle in 设置. */
@@ -172,6 +175,8 @@ export class ExamTui {
     return this.state;
   }
 
+  get demoSource(): string | undefined { return this.cfg.offlineDemo?.sourcePath; }
+
   getService(): TaskControlService {
     return this.service;
   }
@@ -186,6 +191,7 @@ export class ExamTui {
     return this.chat;
   }
   openChat(input?: string): void {
+    if (this.cfg.offlineDemo) throw new Error("离线演示仅提供测评。普通聊天请使用 npm run tui。");
     const workspace = this.getChatWorkspace();
     if (input) workspace.input = input;
     this.state = { ...this.state, screen: { kind: "chat" }, message: undefined };
@@ -211,6 +217,7 @@ export class ExamTui {
     return this.collection;
   }
   openCollection(): void {
+    if (this.cfg.offlineDemo) throw new Error("离线演示使用随附题包。联网搜题请使用 npm run tui。");
     this.getCollectionWorkspace().open(); this.state = { ...this.state, screen: { kind: "collection" }, message: undefined };
   }
   editCollectionDraft(draftId: string): void { this.collectionDraftId = draftId; this.previewDraft(draftId); }
@@ -472,6 +479,10 @@ export class ExamTui {
 
   /** Provider groups: pi built-in catalog + our custom endpoints. */
   loadModelGroups(): ProviderGroup[] {
+    if (this.cfg.offlineDemo) {
+      const profiles = [...this.cfg.offlineDemo.registry.profilesById.values()];
+      return listProviderGroups({ version: "1", profiles }, false).map((group) => ({ ...group, runnable: true, keyEnv: undefined }));
+    }
     return listProviderGroups(loadModelsConfig(this.cfg.modelsConfigPath));
   }
 
@@ -494,7 +505,8 @@ export class ExamTui {
     const idx = runnableIdx >= 0 ? runnableIdx : 0;
     const g = groups[idx];
     const firstModel = g?.models[0];
-    const setup: Setup = g && firstModel ? { profileId: firstModel.profileId, modelId: firstModel.modelId, mode: "without_tool", concurrency: 1 } : { profileId: "", modelId: "", mode: "without_tool", concurrency: 1 };
+    const mode = this.cfg.offlineDemo ? "both" : "without_tool";
+    const setup: Setup = { profileId: firstModel?.profileId ?? "", modelId: firstModel?.modelId ?? "", mode, concurrency: 1 };
     this.state = { ...this.state, screen: { kind: "setup", groups, providerIndex: idx, setup } };
   }
 
@@ -575,6 +587,7 @@ export class ExamTui {
   }
 
   private registryFor(setup: Pick<Setup, "profileId" | "modelId">): Registry {
+    if (this.cfg.offlineDemo) return this.cfg.offlineDemo.registry;
     const registry = this.cfg.registryOverride ?? createMergedRegistry(loadModelsConfig(this.cfg.modelsConfigPath));
     if (!registry.profilesById.has(setup.profileId)) {
       const profile = synthesizeBuiltinProfile(setup.profileId, setup.modelId);
@@ -676,7 +689,7 @@ export class ExamTui {
     }
     const s = this.state.screen;
     if (s.kind !== "confirm" || !this.state.selectedDataset) return undefined;
-    if (!this.cfg.authorisePaid && !this.cfg.registryOverride) {
+    if (!this.cfg.authorisePaid && !this.cfg.registryOverride && !this.cfg.offlineDemo) {
       this.state = { ...this.state, message: "REFUSED: real (paid) model calls require --authorise-paid" };
       return undefined;
     }
@@ -714,8 +727,10 @@ export class ExamTui {
   }
 
   stop(): void {
-    if (this.state.taskId) this.service.stop(this.state.taskId);
-    this.state = { ...this.state, message: "已请求停止，等待进行中的请求结束并保存记录。" };
+    const taskId = this.state.taskId;
+    if (!taskId || this.service.getStatus(taskId)?.state !== "running") return;
+    this.service.stop(taskId);
+    this.state = { ...this.state, message: STOP_PENDING };
   }
 
   /** P1-2: stop the running task AND wait for it to finish (in-flight requests
@@ -734,7 +749,8 @@ export class ExamTui {
   /** Feed a live event into the controller's view state. */
   onEvent(e: TaskEvent): void {
     if (e.type === "mode_done") this.runIdsByMode.set(e.mode, e.runId);
-    this.state = { ...this.state, events: [...this.state.events, e] };
+    const message = e.type === "task_done" && this.state.message === STOP_PENDING ? undefined : this.state.message;
+    this.state = { ...this.state, events: [...this.state.events, e], message };
   }
 
   async openTasks(): Promise<void> {
@@ -772,6 +788,7 @@ export class ExamTui {
   private judgePath(): string { return this.cfg.judgeConfigPath ?? join(dirname(this.cfg.modelsConfigPath), "judge.json"); }
 
   openJudge(): void {
+    if (this.cfg.offlineDemo) throw new Error("离线演示使用人工复核。独立模型裁判请使用 npm run tui。");
     const draft = readJudgeConfig(this.judgePath()) ?? defaultJudgeDraft();
     this.state = { ...this.state, message: undefined, screen: { kind: "judge", draft, groups: this.loadModelGroups(), stage: "config", providerIndex: 0, modelIndex: 0 } };
   }
@@ -823,6 +840,7 @@ export class ExamTui {
   }
 
   async prepareJudge(): Promise<void> {
+    if (this.cfg.offlineDemo) throw new Error("离线演示使用人工复核。独立模型裁判请使用 npm run tui。");
     const s = this.state.screen; if (s.kind !== "review" && s.kind !== "calibration") return;
     if (s.kind === "review" && s.calibrationParent) throw new Error("请先完成人工核对并返回校准列表，再单独确认裁判请求。");
     if (s.kind === "review" && s.confirming) throw new Error("请先取消人工评分确认。");

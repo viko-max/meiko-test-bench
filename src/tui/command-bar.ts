@@ -24,7 +24,7 @@ const accent = (text: string) => `\x1b[38;2;111;211;204m${text}\x1b[0m`;
 
 /** 命令仅由调用方分派到已存在的界面操作，不执行 Shell 或模型请求。 */
 export class CommandBar {
-  private readonly input = new Input({ prompt: accent(" › "), placeholder: "输入消息，或 / 查看命令", placeholderStyle: muted });
+  private readonly input: Input;
   private opened = false;
   private selected = 0;
   private error = "";
@@ -33,7 +33,8 @@ export class CommandBar {
   onExecute?: (command: CommandName) => void;
   onText?: (text: string) => void;
 
-  constructor() {
+  constructor(private readonly isAvailable: (command: CommandName) => boolean = () => true) {
+    this.input = new Input({ prompt: accent(" › "), placeholder: isAvailable("chat") ? "输入消息，或 / 查看命令" : "输入 / 查看命令", placeholderStyle: muted });
     this.input.onSubmit = () => this.submit();
     this.input.onEscape = () => this.close();
   }
@@ -62,7 +63,7 @@ export class CommandBar {
   private matches() {
     const value = this.value.trim();
     if (!value.startsWith("/")) return [];
-    return COMMANDS.filter((command) => `/${command.name}`.startsWith(value.toLowerCase()));
+    return COMMANDS.filter((command) => this.isAvailable(command.name) && `/${command.name}`.startsWith(value.toLowerCase()));
   }
 
   private execute(command: CommandName): void {

@@ -12,13 +12,12 @@ Meiko Test-Bench 是一个基于 Pi 的多学科模型测评工具。它将题�
 
 ```powershell
 npm ci
-Copy-Item configs/models.example.json configs/models.json
-npm run tui
+npm run demo
 ```
 
-仓库附带一组自写示例题。启动后用 `/bank` 查看，或用 `/run` 查看题集检查和模型选择流程。浏览题库和配置界面无需模型凭据。
+离线演示使用六道自写题和本地脚本作答，无需配置模型或 API Key。启动后按任意键跳过开场，用 `/import` 导入预填的题包，核对后入库，再用 `/run` 运行两种模式。题面、作答、工具执行、判分、复核和续跑走实际流程。作答文本与模型用量来自本地演示提供方，成绩只用于验证流程。[查看演示步骤](datasets/demo/README.md)。
 
-要调用真实模型，请选择或编辑 `configs/models.json` 中的档案，并在进程环境中提供对应的 API Key。配置文件只存放环境变量名。真实测评以 `npm run tui -- --authorise-paid` 启动，随后在界面核对模型、模式、题量与预算再开始。
+要调用真实模型，首次配置时将 `configs/models.example.json` 复制到 `configs/models.json`，选好模型档案，再在进程环境中提供对应的 API Key。配置文件只存放环境变量名。真实测评以 `npm run tui -- --authorise-paid` 启动，随后在界面核对模型、模式、题量与预算再开始。
 
 使用 Python 工具前，创建项目内环境并安装依赖。
 

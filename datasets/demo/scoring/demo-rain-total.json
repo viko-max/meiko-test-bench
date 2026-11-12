@@ -1,0 +1,12 @@
+{
+  "questionId": "demo-rain-total",
+  "questionVersion": "1",
+  "scoringVersion": "1",
+  "answerKind": "numeric_unit",
+  "reference": "30 mm",
+  "maxScore": 1,
+  "units": [
+    "mm"
+  ],
+  "deterministicLocked": true
+}

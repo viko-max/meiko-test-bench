@@ -9,11 +9,13 @@
 import type { AnswerKind, AnswerMode, ExecutionStatus, Grade, GradingStatus, PublicQuestion, ScoringSpec, Trial } from "../shared/contracts.js";
 import { summarizeRequests, type MetricsSummary } from "../shared/metrics.js";
 import { gradeIsStale } from "../grading/grade.js";
+import { OFFLINE_DEMO_LABEL, OFFLINE_DEMO_PROVIDER } from "../shared/offline-demo.js";
 
 const CONFIRMED: ReadonlySet<GradingStatus> = new Set<GradingStatus>(["rule_graded", "human_confirmed"]);
 
 export interface ReportInput {
   mode: AnswerMode;
+  provider?: string;
   trials: Trial[];
   grades: Grade[];
   questions: Map<string, PublicQuestion>;
@@ -42,6 +44,7 @@ export interface PerQuestionRow {
 
 export interface ModeReport {
   mode: AnswerMode;
+  offlineDemo?: true;
   totals: { confirmedRaw: number; confirmedMax: number; plannedMax: number };
   coverage: Record<string, number>;
   bySubject: Record<string, Bucket>;
@@ -135,6 +138,7 @@ export function buildModeReport(input: ReportInput): ModeReport {
 
   return {
     mode: input.mode,
+    ...(input.provider === OFFLINE_DEMO_PROVIDER || trials.some((trial) => trial.provider === OFFLINE_DEMO_PROVIDER) ? { offlineDemo: true as const } : {}),
     totals: { confirmedRaw, confirmedMax, plannedMax: input.plannedMaxScore },
     coverage,
     bySubject,
@@ -149,6 +153,7 @@ export function reportToMarkdown(report: ModeReport): string {
   const lines: string[] = [];
   lines.push(`# Exam Report — mode: ${report.mode}`);
   lines.push("");
+  if (report.offlineDemo) lines.push(`> ${OFFLINE_DEMO_LABEL}。成绩仅用于验证流程。`, "");
   lines.push(`- Confirmed score: **${report.totals.confirmedRaw} / ${report.totals.confirmedMax}** (raw sum, original weights)`);
   lines.push(`- Planned max (full dataset): ${report.totals.plannedMax}`);
   lines.push(`- Coverage: ${JSON.stringify(report.coverage)}`);

@@ -511,7 +511,7 @@ async function runBatchLocked(p: BatchParams, executionLease: ExecutionLease): P
     // P1-5: the run's canonical dir is taskRunId (where trials + manifest live);
     // a fully-resumed run writes no new trial but still reports from its manifest.
     const outDir = modeRunId || taskRunId;
-    const report = buildModeReport({ mode, trials, grades, questions, scorings, plannedMaxScore: plannedMax, plannedQuestionIds: confirmed.map((e) => e.questionId) });
+    const report = buildModeReport({ mode, provider: profile.provider, trials, grades, questions, scorings, plannedMaxScore: plannedMax, plannedQuestionIds: confirmed.map((e) => e.questionId) });
     // A fully-resumed run may execute nothing; ensure the output dir exists.
     ensureDir(pathJoin(p.runsRoot, outDir));
     const reportMdPath = pathJoin(p.runsRoot, outDir, "report.md");

@@ -47,10 +47,10 @@ function anyKeySet(envVars: string[]): boolean {
 
 /** Enumerate pi built-in providers + our custom profiles, merged (custom wins
  *  on a shared provider id). Custom + runnable groups sort first. */
-export function listProviderGroups(config: ModelsConfig): ProviderGroup[] {
+export function listProviderGroups(config: ModelsConfig, includeBuiltin = true): ProviderGroup[] {
   const groups: ProviderGroup[] = [];
   const customProviderIds = new Set(config.profiles.map((p) => p.provider));
-  for (const providerId of getBuiltinProviders()) {
+  for (const providerId of includeBuiltin ? getBuiltinProviders() : []) {
     const raw = getBuiltinModels(providerId) as unknown as Array<Record<string, unknown>>;
     if (raw.length === 0) continue;
     const keyEnv = keyEnvFor(providerId);

@@ -16,6 +16,7 @@
     "pretest:watch": "npm run build",
     "test:watch": "vitest --fileParallelism=false",
     "tui": "tsx src/tui/main.ts",
+    "demo": "tsx src/tui/main.ts --demo",
     "cli": "tsx src/tui/cli.ts",
     "accept": "tsx src/accept.ts"
   },

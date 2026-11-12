@@ -198,7 +198,7 @@ const SI_PREFIX: Record<string, number> = {
   da: 1e1, h: 1e2, k: 1e3, M: 1e6, G: 1e9, T: 1e12,
   n: 1e-9, "µ": 1e-6, u: 1e-6, m: 1e-3, c: 1e-2, d: 1e-1,
 };
-const BASE_UNITS = new Set(["m", "g", "s", "A", "K", "mol", "cd", "N", "Pa", "J", "W", "C", "V", "F", "Ω", "Hz", "L", "bar", "eV"]);
+const BASE_UNITS = new Set(["m", "g", "s", "A", "K", "mol", "cd", "N", "Pa", "J", "W", "C", "V", "F", "Ω", "Hz", "L", "bar", "eV", "m/s^2"]);
 
 export function parseUnit(u: string): { base: string; scale: number } | null {
   if (!u) return null;

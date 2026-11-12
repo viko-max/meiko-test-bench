@@ -61,6 +61,7 @@ export interface TaskDetail {
 
 export interface TaskSummary {
   runId: string;
+  mode?: AnswerMode;
   hasReport: boolean;
   trialCount: number;
   startedAt?: string;
@@ -219,7 +220,8 @@ export class TaskControlService {
     const out: TaskSummary[] = [];
     for (const dir of dirs.sort()) {
       const trialsDir = join(runsRoot, dir, "trials");
-      if (!existsSync(trialsDir) && !readManifest(runsRoot, dir) && !existsSync(join(runsRoot, dir, "report.json"))) continue;
+      const manifest = readManifest(runsRoot, dir);
+      if (!existsSync(trialsDir) && !manifest && !existsSync(join(runsRoot, dir, "report.json"))) continue;
       let trialCount = 0;
       try {
         trialCount = readdirSync(trialsDir).length;
@@ -238,6 +240,7 @@ export class TaskControlService {
         } catch { historyIssue = "任务时间记录无法读取"; }
       } else historyIssue = "未记录任务开始时间";
       out.push({ runId: dir, hasReport: existsSync(join(runsRoot, dir, "report.json")), trialCount,
+        ...(manifest ? { mode: manifest.mode } : {}),
         ...(startedAt ? { startedAt } : {}), ...(historyIssue ? { historyIssue } : {}) });
     }
     // 报告会因离线复核更新，不能用文件修改时间把旧任务排到最近。
@@ -306,6 +309,7 @@ export class TaskControlService {
     const va = await loadValidAnswers(runsRoot, runId, datasetDir, datasetId, mode);
     return buildModeReport({
       mode,
+      provider: readManifest(runsRoot, runId)?.provider,
       trials: va.trials,
       grades: va.grades,
       questions: va.questions,
@@ -332,7 +336,7 @@ export class TaskControlService {
         ...(trial.questionContentDigest ? { contentDigest: trial.questionContentDigest } : {}),
       };
     });
-    const report = buildModeReport({ mode, trials: va.trials, grades: va.grades, questions: va.questions,
+    const report = buildModeReport({ mode, provider: readManifest(runsRoot, runId)?.provider, trials: va.trials, grades: va.grades, questions: va.questions,
       scorings: va.scorings, plannedMaxScore: va.plannedMax, plannedQuestionIds: va.plannedQuestionIds });
     return { runId, questions, report };
   }

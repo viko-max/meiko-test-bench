@@ -1,0 +1,9 @@
+{
+  "questionId": "demo-chemistry",
+  "questionVersion": "1",
+  "scoringVersion": "1",
+  "answerKind": "single_choice",
+  "reference": "C",
+  "maxScore": 1,
+  "deterministicLocked": true
+}

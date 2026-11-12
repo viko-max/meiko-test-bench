@@ -7,7 +7,7 @@
  * are never silently repaired or auto-rewritten.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import sharp from "sharp";
 import {
   PublicQuestionSchema,
@@ -121,7 +121,8 @@ export async function validateImagesDecodable(question: PublicQuestion, publicDi
     }
     if (!existsSync(path)) continue;
     try {
-      const meta = await sharp(path).metadata();
+      // Windows 的原生图片解码需要扩展路径才能打开较深的导入目录。
+      const meta = await sharp(toNamespacedPath(path)).metadata();
       if (!meta.width || !meta.height) errors.push(`undecodable image: ${a.ref}`);
     } catch (e) {
       errors.push(`undecodable image ${a.ref}: ${(e as Error).message}`);
@@ -138,14 +139,15 @@ function validateScoring(question: PublicQuestion, scoring: ScoringSpec): { erro
   return { errors, warnings };
 }
 
-export async function importDataset(opts: { datasetId: string; publicDir: string; scoringDir: string }): Promise<ImportResult> {
+export async function importDataset(opts: { datasetId: string; publicDir: string; scoringDir?: string }): Promise<ImportResult> {
   const { datasetId, publicDir, scoringDir } = opts;
 
   // Load scoring specs by questionId.
   const scoringById = new Map<string, { spec: ScoringSpec; errors: string[] }>();
-  for (const f of listFiles(scoringDir, ".json")) {
+  const scoringPaths = scoringDir ? listFiles(scoringDir, ".json").map((f) => join(scoringDir, f)) : [];
+  for (const f of scoringPaths) {
     try {
-      const spec = ScoringSpecSchema.parse(JSON.parse(readFileSync(join(scoringDir, f), "utf8")));
+      const spec = ScoringSpecSchema.parse(JSON.parse(readFileSync(f, "utf8")));
       if (scoringById.has(spec.questionId)) {
         scoringById.get(spec.questionId)!.errors.push(`duplicate scoring questionId: ${spec.questionId}`);
         throw new Error(`duplicate scoring questionId: ${spec.questionId}`);

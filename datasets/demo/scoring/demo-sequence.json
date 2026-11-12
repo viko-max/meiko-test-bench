@@ -1,0 +1,29 @@
+{
+  "questionId": "demo-sequence",
+  "questionVersion": "1",
+  "scoringVersion": "1",
+  "answerKind": "open",
+  "maxScore": 4,
+  "rubric": [
+    {
+      "partLabel": "a",
+      "points": 1,
+      "evidence": "写出 a_n = 4 + 3(n - 1) 或等价通项。"
+    },
+    {
+      "partLabel": "a",
+      "points": 1,
+      "evidence": "算出第 6 项为 19。"
+    },
+    {
+      "partLabel": "b",
+      "points": 1,
+      "evidence": "写出前六项求和或等价等差数列求和过程。"
+    },
+    {
+      "partLabel": "b",
+      "points": 1,
+      "evidence": "算出前 6 项和为 69。"
+    }
+  ]
+}

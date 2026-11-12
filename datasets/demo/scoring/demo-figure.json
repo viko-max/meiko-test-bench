@@ -1,0 +1,9 @@
+{
+  "questionId": "demo-figure",
+  "questionVersion": "1",
+  "scoringVersion": "1",
+  "answerKind": "single_choice",
+  "reference": "B",
+  "maxScore": 1,
+  "deterministicLocked": true
+}
