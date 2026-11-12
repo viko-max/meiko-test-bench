@@ -6,6 +6,7 @@ import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-work
 import { ModelProfileSchema, PublicQuestionSchema, type Grade, type Trial } from "../src/shared/contracts.js";
 import { loadArchivedTrials, writeGradeFile } from "../src/runner/archive.js";
 import { loadQuestionImages, runBatch, type BatchParams } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import { importDataset } from "../src/dataset/import.js";
 import { readJsonl } from "../src/shared/json.js";
 import * as attachmentPaths from "../src/tools/paths.js";
@@ -38,7 +39,7 @@ function setup() {
   });
   const params: BatchParams = {
     datasetId: "demo", datasetDir: root, modes: ["without_tool"], profileId: "faux", modelId: "faux-1", limit: 1,
-    runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: "v1", pythonInterpreter: "python", modelsConfigPath: "unused",
+    runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", modelsConfigPath: "unused",
     registryOverride: { models, profilesById: new Map([["faux", profile]]) },
   };
   return { root, publicDir, scoringDir, markdown, scoring, faux, params };

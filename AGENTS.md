@@ -17,7 +17,7 @@
 - 采用 Pi Agent 原语，测评请求显式设置 `maxRetries: 0` 和取消信号。结果未知的请求由用户决定是否补答，续跑匹配完整运行身份。
 - 发请求前保存轮次与预算预留。用量缺失保持未知，预算与存档失败阻止后续请求。停止任务后先取消进行中的调用、终止相关工具进程，再完成存档。
 - 客观题只采用有明确证据的提取结果。歧义进入复核。独立模型裁判经人工样本校准后才能作为确认成绩依据。复核保留证据和旧评分。
-- 本地 Python 和 TypeScript 工具使用受控子进程、时限和输出上限。子进程仍共享主机权限，测评禁网是使用规则。
+- 正式 with_tool 只提供受限四工具：calculate（TypeScript AST 白名单计算）、read_file、view_image、process_image；无任意 Python/TypeScript 执行，也没有工具子进程。`src/tools/exec-python.ts` 与 `src/tools/exec-typescript.ts` 是 legacy v1 实现，未注册到当前正式工具集。历史 v1 with_tool 任务不续跑；可查看、复核和重评分；without_tool 历史身份保持。不同工具版本能力不同，成绩不直接比较。测评禁网是使用规则。
 
 ## 聊天与搜题
 

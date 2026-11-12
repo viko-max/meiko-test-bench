@@ -3,8 +3,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolContext } from "./context.js";
-import { executePythonTool } from "./exec-python.js";
-import { executeTypeScriptTool } from "./exec-typescript.js";
+import { calculateTool } from "./calculate.js";
 import { readFileTool } from "./read-file.js";
 import { processImageTool, viewImageTool } from "./image.js";
 
@@ -41,8 +40,11 @@ function isPathLike(p: string): boolean {
   return p.includes("/") || p.includes("\\") || p.startsWith(".");
 }
 
-export const EXAM_TOOLS_VERSION = "v1";
+export const EXAM_TOOLS_VERSION = "v2-restricted";
+
+/** Identity version for historical runs that used no tools at all. */
+export const WITHOUT_TOOL_TOOLS_VERSION = "v1";
 
 export function buildExamTools(ctx: ToolContext): AgentTool[] {
-  return [executePythonTool(ctx), executeTypeScriptTool(ctx), readFileTool(ctx), viewImageTool(ctx), processImageTool(ctx)];
+  return [calculateTool(ctx), readFileTool(ctx), viewImageTool(ctx), processImageTool(ctx)];
 }

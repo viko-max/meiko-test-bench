@@ -1,6 +1,7 @@
 /** Batch exam runner entry. PAID/network — requires --authorise-paid. */
 import type { AnswerMode } from "../src/shared/contracts.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 
 function arg(name: string, d?: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
     limit,
     runsRoot: "runs",
     workRoot: ".work",
-    toolsVersion: "v1",
+    toolsVersion: EXAM_TOOLS_VERSION,
     pythonInterpreter: "pyenv/.venv/Scripts/python.exe",
     modelsConfigPath: "configs/models.json",
     limitsPath: "configs/limits.json",

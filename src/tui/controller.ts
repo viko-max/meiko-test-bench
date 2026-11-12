@@ -177,6 +177,9 @@ export class ExamTui {
 
   get demoSource(): string | undefined { return this.cfg.offlineDemo?.sourcePath; }
 
+  /** 当前入口配置的工具版本（确认页展示 with_tool 能力用）。 */
+  get toolsVersion(): string { return this.cfg.toolsVersion; }
+
   getService(): TaskControlService {
     return this.service;
   }
@@ -610,7 +613,8 @@ export class ExamTui {
   async prepareResume(runId: string): Promise<void> {
     const datasetId = this.datasetId(runId);
     const resume = await this.service.prepareResume(this.cfg.runsRoot, runId, join(this.cfg.datasetsRoot, datasetId), datasetId);
-    if (resume.manifest.toolsVersion !== this.cfg.toolsVersion) throw new Error("当前工具版本与历史任务不一致，不能冒用原版本续跑。");
+    // without_tool 的历史身份恒为 v1，不受当前工具版本影响；仅 with_tool 要求当前版本一致。
+    if (resume.manifest.mode === "with_tool" && resume.manifest.toolsVersion !== this.cfg.toolsVersion) throw new Error("当前工具版本与历史任务不一致，不能冒用原版本续跑。");
     const c = resume.config;
     this.state = { ...this.state, selectedDataset: datasetId, message: undefined, screen: { kind: "confirm", resume,
       setup: { profileId: c.profileId, modelId: resume.manifest.modelId, mode: resume.manifest.mode,

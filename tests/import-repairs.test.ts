@@ -9,6 +9,7 @@ import { ExamTui } from "../src/tui/controller.js";
 import { ExamApp } from "../src/tui/app.js";
 import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import { readManifest } from "../src/runner/answer-source.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import * as json from "../src/shared/json.js";
@@ -240,7 +241,7 @@ describe("导入安全、忠实转换与不可覆盖发布", () => {
       return stream(model, context, options);
     });
     const profile = ModelProfileSchema.parse({ id: "faux", displayName: "Faux", provider: "faux", api: "faux", baseUrl: "https://faux.example/v1", auth: { envVars: ["FAUX_KEY"] }, models: [{ id: "faux-1", name: "Faux", input: ["text", "image"], reasoning: false, contextWindow: 4096, maxTokens: 1024 }], capability: { imageInput: "verified", verificationEvidence: "offline fixture" } });
-    const result = await runBatch({ datasetId: published.datasetId, datasetDir: published.path, modes: ["without_tool", "with_tool"], profileId: "faux", modelId: "faux-1", limit: 1, runsRoot: join(s.root, "runs"), workRoot: join(s.root, "work"), toolsVersion: "v1", pythonInterpreter: "python", modelsConfigPath: "unused", registryOverride: { models, profilesById: new Map([["faux", profile]]) } });
+    const result = await runBatch({ datasetId: published.datasetId, datasetDir: published.path, modes: ["without_tool", "with_tool"], profileId: "faux", modelId: "faux-1", limit: 1, runsRoot: join(s.root, "runs"), workRoot: join(s.root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", modelsConfigPath: "unused", registryOverride: { models, profilesById: new Map([["faux", profile]]) } });
     expect(faux.state.callCount).toBe(2);
     expect(contexts).toHaveLength(2);
     const imageData = readFileSync(join(s.source, "figure.png")).toString("base64");

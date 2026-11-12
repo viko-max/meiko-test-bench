@@ -6,6 +6,7 @@ import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-work
 import { getCapabilities, setCapabilities, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import { ReviewService } from "../src/service/review-service.js";
 import * as images from "../src/service/question-image.js";
 import { ExamTui } from "../src/tui/controller.js";
@@ -31,7 +32,7 @@ async function fixture(withImages = true) {
   faux.setResponses(Array.from({ length: 2 }, () => (context) => { seen.push(JSON.stringify(context)); return fauxAssistantMessage("独立作答，请检查两幅图。"); }));
   const models = createModels(); models.setProvider(faux.provider);
   const profile = ModelProfileSchema.parse({ id: "faux", provider: "faux", displayName: "Faux", api: "faux", baseUrl: "https://faux.example/v1", auth: { envVars: ["FAUX_KEY"] }, models: [{ id: "faux-1", name: "Faux", input: ["text", "image"], contextWindow: 8192, maxTokens: 1024 }] });
-  const cfg = { datasetsRoot: join(root, "datasets"), runsRoot: join(root, "runs"), workRoot: join(root, "work"), modelsConfigPath: "unused", toolsVersion: "v1", pythonInterpreter: "python", animation: false, registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
+  const cfg = { datasetsRoot: join(root, "datasets"), runsRoot: join(root, "runs"), workRoot: join(root, "work"), modelsConfigPath: "unused", toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", animation: false, registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
   const result = await runBatch({ ...cfg, datasetId: "demo", datasetDir: dataset, profileId: "faux", modelId: "faux-1", modes: ["without_tool", "with_tool"], limit: 1 });
   const runId = result.byMode.without_tool!.runId;
   const service = new ReviewService(cfg.runsRoot, dataset, "demo");

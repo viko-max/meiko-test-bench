@@ -6,6 +6,7 @@ import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "
 import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { ImportService } from "../src/import/import-service.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import { writeGradeFile } from "../src/runner/archive.js";
 import { ReviewService } from "../src/service/review-service.js";
 import { TaskControlService } from "../src/service/task-service.js";
@@ -15,7 +16,7 @@ import type { GraderRequest } from "../src/grading/model-grader.js";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
 import { Agent } from "@earendil-works/pi-agent-core";
 
-// 测试材料与 faux 响应仅用于验证程序行为；本地 TypeScript 工具实际执行，不冒充模型能力。
+// 测试材料与 faux 响应仅用于验证程序行为；本地 calculate 工具实际求值，不冒充模型能力。
 async function fixture(executeTool = false) {
   mkdirSync(resolve(".work"), { recursive: true });
   const root = mkdtempSync(resolve(".work", "representative-workflow-"));
@@ -37,7 +38,7 @@ async function fixture(executeTool = false) {
   const answers: Record<string, string> = { single: "最终答案：A", multi: "最终答案：A、C", numeric: "最终答案：6 N", blanks: "a=2，b=3", expression: "最终答案：(x+1)^2", shared: "第一小问：完整解释。第二小问：完整推导。", unscored: "完整无评分答卷", ambiguous: "A 或 B，尚不能确定最终选项。" };
   const sourceFile = join(source, "questions.json");
   writeFileSync(sourceFile, JSON.stringify(samples.map((sample) => ({ ...sample, version: "1", question: `fixture:${sample.id}\n共享条件保持原样，公式 $F=ma$。` }))));
-  const cfg = { datasetsRoot: join(root, "datasets"), importRoot: join(root, "drafts"), runsRoot: join(root, "runs"), workRoot: join(root, "work"), modelsConfigPath: "unused", toolsVersion: "v1", pythonInterpreter: "python", animation: false };
+  const cfg = { datasetsRoot: join(root, "datasets"), importRoot: join(root, "drafts"), runsRoot: join(root, "runs"), workRoot: join(root, "work"), modelsConfigPath: "unused", toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", animation: false };
   const importer = new ImportService(cfg.datasetsRoot, cfg.importRoot);
   const draft = importer.importSource(sourceFile, { datasetId: "representative" });
   const published = await importer.confirmDraft(draft.draftId);
@@ -51,7 +52,7 @@ async function fixture(executeTool = false) {
     const toolResult = context.messages.some((message) => message.role === "toolResult");
     const toolOutput = context.messages.flatMap((message) => message.role === "toolResult" ? message.content.flatMap((part) => part.type === "text" ? [part.text] : []) : []).join("\n");
     requests.push({ id, text, withTools, toolResult, toolOutput });
-    if (executeTool && id === "numeric" && withTools && !toolResult) return fauxAssistantMessage(fauxToolCall("execute_typescript", { code: "console.log(2 * 3)" }));
+    if (executeTool && id === "numeric" && withTools && !toolResult) return fauxAssistantMessage(fauxToolCall("calculate", { expression: "2 * 3" }));
     return fauxAssistantMessage(answers[id]!);
   };
   faux.setResponses(Array.from({ length: 17 }, () => respond));
@@ -80,8 +81,7 @@ describe("代表题型完整流程", () => {
       expect(request.text).toContain(readFileSync(join(s.published.path, "public", "second.jpg")).toString("base64"));
     }
     const toolRequest = s.requests.find((request) => request.id === "numeric" && request.withTools && request.toolResult);
-    expect(toolRequest?.toolOutput).toMatch(/--- stdout ---\s*\r?\n6(?:\r?\n|$)/);
-    expect(toolRequest?.toolOutput).toContain("run exit=0");
+    expect(toolRequest?.toolOutput).toContain("result = 6");
     for (const mode of ["without_tool", "with_tool"] as const) {
       const report = s.result.byMode[mode]!.report;
       expect(report.perQuestion).toHaveLength(8);

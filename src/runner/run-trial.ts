@@ -20,6 +20,8 @@ export interface RunTrialParams {
   images?: ImageContent[];
   signal?: AbortSignal; // stop signal (TS-2)
   onEvent?: (event: AgentEvent) => void;
+  /** with_tool 展示公开附件相对名；默认保持原题面（逐字不变）。 */
+  includeAssetRefs?: boolean;
 }
 
 export interface TrialOutcome {
@@ -91,7 +93,7 @@ export async function runTrial(p: RunTrialParams): Promise<TrialOutcome> {
   const deadline = setTimeout(() => abort("total_time_limit"), Math.max(0, p.guard.totalRunTimeMs - p.guard.elapsedMs()));
   try {
     if (!p.signal?.aborted) {
-      const userContent = buildUserContent(p.question);
+      const userContent = buildUserContent(p.question, { includeAssetRefs: p.includeAssetRefs ?? false });
       await p.agent.prompt(userContent, p.images ?? []);
       await p.agent.waitForIdle();
     }
