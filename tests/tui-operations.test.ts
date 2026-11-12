@@ -7,6 +7,7 @@ import { ExamTui } from "../src/tui/controller.js";
 import { TaskControlService } from "../src/service/task-service.js";
 import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import { readManifest } from "../src/runner/answer-source.js";
 import { visibleWidth, stripTerminalSequences, sliceByColumn } from "@earendil-works/pi-tui";
 import { prepareMascotImage, renderMascotImage } from "../src/tui/mascot.js";
@@ -30,7 +31,7 @@ function fixture() {
   faux.setResponses(Array.from({ length: 4 }, () => fauxAssistantMessage("F = 6 N")));
   const models = createModels();
   models.setProvider(faux.provider);
-  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath, runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: "v1", pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
+  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath, runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
   const service = new TaskControlService();
   const tui = new ExamTui(cfg, service);
   tui.loadDatasets();

@@ -10,6 +10,7 @@ import type { AnswerKind, AnswerMode, ExecutionStatus, Grade, GradingStatus, Pub
 import { summarizeRequests, type MetricsSummary } from "../shared/metrics.js";
 import { gradeIsStale } from "../grading/grade.js";
 import { OFFLINE_DEMO_LABEL, OFFLINE_DEMO_PROVIDER } from "../shared/offline-demo.js";
+import { describeToolVersion, TOOL_VERSION_COMPARABILITY } from "../shared/tool-version.js";
 
 const CONFIRMED: ReadonlySet<GradingStatus> = new Set<GradingStatus>(["rule_graded", "human_confirmed"]);
 
@@ -51,6 +52,8 @@ export interface ModeReport {
   byAnswerKind: Record<string, Bucket>;
   perQuestion: PerQuestionRow[];
   metrics?: { recordedTrials: number; totalTrials: number; summary: MetricsSummary };
+  /** 本模式存档答卷实际使用的工具版本（去重排序，含历史 v1）；分数逻辑不受影响。 */
+  toolVersions?: string[];
 }
 
 export function buildModeReport(input: ReportInput): ModeReport {
@@ -144,6 +147,7 @@ export function buildModeReport(input: ReportInput): ModeReport {
     bySubject,
     byAnswerKind,
     perQuestion,
+    ...(trials.length ? { toolVersions: [...new Set(trials.map((t) => t.toolsVersion))].sort() } : {}),
     metrics: { recordedTrials: trials.filter((trial) => trial.metrics !== undefined).length, totalTrials: trials.length,
       summary: summarizeRequests(trials.flatMap((trial) => trial.metrics?.requests ?? [])) },
   };
@@ -156,6 +160,10 @@ export function reportToMarkdown(report: ModeReport): string {
   if (report.offlineDemo) lines.push(`> ${OFFLINE_DEMO_LABEL}。成绩仅用于验证流程。`, "");
   lines.push(`- Confirmed score: **${report.totals.confirmedRaw} / ${report.totals.confirmedMax}** (raw sum, original weights)`);
   lines.push(`- Planned max (full dataset): ${report.totals.plannedMax}`);
+  if (report.toolVersions?.length) {
+    const shown = report.toolVersions.map((v) => describeToolVersion(report.mode, v));
+    lines.push(`- Tool versions: ${shown.join("；")}${report.mode === "with_tool" ? `（${TOOL_VERSION_COMPARABILITY}）` : ""}`);
+  }
   lines.push(`- Coverage: ${JSON.stringify(report.coverage)}`);
   if (report.metrics) {
     lines.push(`- Metrics coverage: ${report.metrics.recordedTrials}/${report.metrics.totalTrials} trials; missing values are null, partial sums include known requests only.`);

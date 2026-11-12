@@ -1,4 +1,6 @@
 /** execute_typescript: compile model-written TS with the project-local tsc, then run it.
+ *  LEGACY v1 工具实现（宿主任意代码、非隔离），未注册到当前正式工具集
+ *  （当前正式 with_tool 为 v2-restricted 受限四工具，见 tools/index.ts）。保留仅作历史参考。
  *  Compiled to an ES2022 module so it runs correctly under this project's
  *  "type": "module" (a CommonJS build would throw "exports is not defined" when
  *  executed inside the project's .work dir). */

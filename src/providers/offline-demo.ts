@@ -44,6 +44,7 @@ export async function createDemoRegistry(sourcePath: string, tokensPerSecond = 3
     if (!entry.question || !Object.hasOwn(responses, entry.questionId)) throw new Error(`没有对应的演示题：${entry.questionId}`);
     const images = await loadQuestionImages(entry.question, publicDir);
     questionByPayload.set(payloadDigest(buildUserContent(entry.question), images), entry.questionId);
+    questionByPayload.set(payloadDigest(buildUserContent(entry.question, { includeAssetRefs: true }), images), entry.questionId);
   }
 
   const profile = ModelProfileSchema.parse({
@@ -60,17 +61,19 @@ export async function createDemoRegistry(sourcePath: string, tokensPerSecond = 3
     const images = typeof content === "string" ? [] : content.filter((block) => block.type === "image");
     const questionId = questionByPayload.get(payloadDigest(text, images));
     if (!questionId) throw new Error("离线演示只支持未修改的随附题面和原图。");
-    const calculation = context.messages.find((message) => message.role === "toolResult" && message.toolName === "execute_typescript");
+    const calculation = context.messages.find((message) => message.role === "toolResult" && message.toolName === "calculate");
     if (calculation?.role === "toolResult") {
       const output = calculation.content.find((block) => block.type === "text");
-      const value = output?.type === "text" ? /--- stdout ---\r?\n(\d+(?:\.\d+)?)(?:\r?\n|$)/.exec(output.text)?.[1] : undefined;
-      if (calculation.isError || value === undefined) throw new Error("离线演示的 TypeScript 工具未返回有效计算结果。");
-      return fauxAssistantMessage(`Answer: ${value} m/s^2\nTypeScript 工具计算了合力除以质量。`);
+      const value = output?.type === "text" ? /^result = (\S+)$/m.exec(output.text.replace(/\r\n/g, "\n"))?.[1] : undefined;
+      if (calculation.isError || value === undefined || !Number.isFinite(Number(value))) {
+        throw new Error("离线演示的计算工具未返回有效计算结果。");
+      }
+      return fauxAssistantMessage(`Answer: ${value} m/s^2\n计算工具计算了合力除以质量。`);
     }
     const canCalculate = context.messages.some((message) =>
-      message.role === "system" && message.toolsAdded?.some((tool) => tool.name === "execute_typescript"));
+      message.role === "system" && message.toolsAdded?.some((tool) => tool.name === "calculate"));
     if (questionId === "demo-physics" && canCalculate) {
-      return fauxAssistantMessage(fauxToolCall("execute_typescript", { code: "console.log(12 / 4);" }));
+      return fauxAssistantMessage(fauxToolCall("calculate", { expression: "12 / 4" }));
     }
     return fauxAssistantMessage(responses[questionId]!);
   };

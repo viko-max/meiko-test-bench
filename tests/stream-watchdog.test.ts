@@ -7,6 +7,7 @@ import { makeExamStreamFn, scheduledStreamFn } from "../src/providers/stream-fn.
 import { RequestScheduler } from "../src/runner/request-scheduler.js";
 import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 
 const model = fauxProvider().getModel();
 const context = { messages: [] };
@@ -209,7 +210,7 @@ describe("流空闲看门狗", () => {
       return source;
     });
     const profile = ModelProfileSchema.parse({ id: "faux", displayName: "Faux", provider: "faux", api: "faux", baseUrl: "https://faux.example/v1", auth: { envVars: ["FAUX_KEY"] }, models: [{ id: "faux-1", name: "Faux", input: ["text"], reasoning: false, contextWindow: 4096, maxTokens: 1024 }], capability: {} });
-    const params = { datasetId: "demo", datasetDir: root, modes: ["with_tool" as const], profileId: "faux", modelId: "faux-1", limit: 1, runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: "v1", pythonInterpreter: "python", modelsConfigPath: "unused", requestTimeoutMs: 20, registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
+    const params = { datasetId: "demo", datasetDir: root, modes: ["with_tool" as const], profileId: "faux", modelId: "faux-1", limit: 1, runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", modelsConfigPath: "unused", requestTimeoutMs: 20, registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
     const first = await runBatch(params);
     expect(first.byMode.with_tool!.report.perQuestion[0]!.executionStatus).toBe("outcome_unknown");
     expect(signal!.aborted).toBe(true);

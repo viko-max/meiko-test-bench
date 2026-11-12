@@ -1,4 +1,6 @@
-/** execute_python: run model-written Python in a local subprocess (AGENTS.md §9). */
+/** execute_python: run model-written Python in a local subprocess.
+ *  LEGACY v1 工具实现（宿主任意代码、非隔离），未注册到当前正式工具集
+ *  （当前正式 with_tool 为 v2-restricted 受限四工具，见 tools/index.ts）。保留仅作历史参考。 */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";

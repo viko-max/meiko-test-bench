@@ -8,7 +8,7 @@ Meiko Test-Bench 是一个基于 Pi 的多学科模型测评工具。它将题�
 
 ## 开始使用
 
-需要 Node.js 22.19 或更高版本。若使用 Python 答题工具，另需 Python 3.11 或更高版本。以下示例适用于 Windows PowerShell。
+需要 Node.js 22.19 或更高版本。以下示例适用于 Windows PowerShell。
 
 ```powershell
 npm ci
@@ -19,7 +19,7 @@ npm run demo
 
 要调用真实模型，首次配置时将 `configs/models.example.json` 复制到 `configs/models.json`，选好模型档案，再在进程环境中提供对应的 API Key。配置文件只存放环境变量名。真实测评以 `npm run tui -- --authorise-paid` 启动，随后在界面核对模型、模式、题量与预算再开始。
 
-使用 Python 工具前，创建项目内环境并安装依赖。
+正式测评不再需要 Python 环境。以下 Python 环境仅用于复现旧 v1（宿主任意代码）工具实现与历史资料，当前正式 with_tool 不注册这些工具。
 
 ```powershell
 python -m venv pyenv/.venv
@@ -40,7 +40,7 @@ pyenv/.venv/Scripts/python.exe -m pip install -r pyenv/requirements.txt
 
 输入 `/` 展开命令，方向键选择，Tab 补全，Enter 执行。Esc 返回，Ctrl+C 等待后台任务停止和存档后退出。
 
-测评在独立模式下作答。**两种正式测评模式均禁止联网搜索**。工具模式使用本地 Python 或 TypeScript 子进程，子进程仍共享主机权限。评分依据保存在独立目录，测评请求只包含公开题面和随题附件。
+测评在独立模式下作答。**两种正式测评模式均禁止联网搜索**。正式 with_tool 模式提供受限四工具：calculate（TypeScript AST 白名单的安全计算）、read_file、view_image 和 process_image；无任意 Python/TypeScript 执行，也没有工具子进程。非图像公开附件只以相对名在 with_tool 模式展示。评分依据保存在独立目录，测评请求只包含公开题面和随题附件。v1（宿主任意代码，非隔离）与 v2-restricted（受限）成绩不直接比较：v1 with_tool 历史任务不续跑；可查看、复核和重评分；without_tool 历史身份保持不变。
 
 普通聊天、`/collect` 和正式测评分别保存上下文与预算。Spark X2.6 的普通聊天可单独确认供应商原生搜索，默认关闭。缓存或推理用量缺失时界面显示未知。
 

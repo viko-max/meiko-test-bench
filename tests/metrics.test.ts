@@ -18,6 +18,7 @@ import { ExamTui } from "../src/tui/controller.js";
 import { prepareMascotImage } from "../src/tui/mascot.js";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { metricTotal } from "../src/tui/metrics-view.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 
 const model = fauxProvider().getModel();
 const request = (overrides: Partial<RequestMetrics> = {}): RequestMetrics => RequestMetricsSchema.parse({
@@ -234,7 +235,7 @@ it("并发两模式经过真实 Agent/存档/报告/TUI；续跑不新增模型�
   faux.setResponses(Array.from({ length: 4 }, () => fauxAssistantMessage("B")));
   const models = createModels();
   models.setProvider(faux.provider);
-  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath: "unused", runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: "v1", pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
+  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath: "unused", runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
   const params = { ...cfg, datasetDir, datasetId: "demo", modes: ["without_tool", "with_tool"] as Array<"without_tool" | "with_tool">, profileId: "faux", modelId: "faux-1", limit: 2, concurrency: 2 };
   const service = new TaskControlService();
   const id = service.start(params);

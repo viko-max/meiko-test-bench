@@ -9,7 +9,7 @@ import { ContractError } from "../shared/errors.js";
 import { parseOptionsFromBody } from "../dataset/parse.js";
 import { sha256OfJsonable } from "../shared/hashing.js";
 
-export function buildUserContent(q: PublicQuestion): string {
+export function buildUserContent(q: PublicQuestion, opts?: { includeAssetRefs?: boolean }): string {
   assertNoScoringLeak(q);
   const checked = PublicQuestionSchema.safeParse(q);
   if (!checked.success) throw new ContractError(`公开题面校验失败：${checked.error.message}`);
@@ -46,6 +46,16 @@ export function buildUserContent(q: PublicQuestion): string {
     if (figs.length > 0) {
       lines.push("");
       lines.push(`_This question includes ${figs.length} figure(s), provided as image(s) with this message._`);
+    }
+    if (opts?.includeAssetRefs) {
+      const extras = q.assets.filter((a) => !a.mediaType.startsWith("image/"));
+      if (extras.length > 0) {
+        lines.push("");
+        lines.push("## Public attachments");
+        for (const asset of extras) {
+          lines.push(`- ${asset.ref} (${asset.mediaType})`);
+        }
+      }
     }
   }
 

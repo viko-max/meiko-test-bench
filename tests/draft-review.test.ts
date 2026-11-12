@@ -8,6 +8,7 @@ import { ImportService } from "../src/import/import-service.js";
 import { buildUserContent } from "../src/runner/prompt.js";
 import { importDataset } from "../src/dataset/import.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { loadQuestionImage, openQuestionImage } from "../src/service/question-image.js";
 import { renderQuestionImage } from "../src/tui/question-image.js";
@@ -28,7 +29,7 @@ async function fixture() {
   writeFileSync(file, JSON.stringify([{ id: "q1", version: "1", subject: "physics", answer_kind: "open", question: "保持原公式 $F=ma$，解释原图。", options: { A: "选项甲", B: "选项乙" }, parts: [{ label: "a", prompt: "第一小问完整文字。" }], assets: [{ ref: "figure.png" }, { ref: "other.jpg" }], scoring: { reference: "PRIVATE-ANSWER-TEST", maxScore: 4, scoringVersion: "1" } }, { id: "q2", question: "第二题原文。", answer_kind: "open" }], null, 2));
   await sharp({ create: { width: 40, height: 20, channels: 3, background: "#e84562" } }).png().toFile(join(source, "figure.png"));
   await sharp({ create: { width: 60, height: 30, channels: 3, background: "#93bcd8" } }).jpeg().toFile(join(source, "other.jpg"));
-  const cfg = { datasetsRoot: join(root, "datasets"), importRoot: join(root, "drafts"), runsRoot: join(root, "runs"), workRoot: join(root, "work"), modelsConfigPath: "unused", toolsVersion: "v1", pythonInterpreter: "python", animation: false };
+  const cfg = { datasetsRoot: join(root, "datasets"), importRoot: join(root, "drafts"), runsRoot: join(root, "runs"), workRoot: join(root, "work"), modelsConfigPath: "unused", toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", animation: false };
   const service = new ImportService(cfg.datasetsRoot, cfg.importRoot);
   const draft = service.importSource(file, { datasetId: "review-demo" });
   const tui = new ExamTui(cfg);

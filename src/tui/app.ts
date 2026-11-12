@@ -33,6 +33,7 @@ import { CollectionView } from "./collection-view.js";
 import { ChatView } from "./chat-view.js";
 import { MASCOT_ACCENTS, mascotStatus, runtimeStatusLine } from "./mascot-status.js";
 import { OFFLINE_DEMO_LABEL } from "../shared/offline-demo.js";
+import { describeToolVersion, TOOL_VERSION_COMPARABILITY } from "../shared/tool-version.js";
 
 // ── ANSI styling (terminals render these; visibleWidth keeps padding correct) ──
 const S = {
@@ -672,6 +673,10 @@ export class ExamApp implements Component {
         lines.push(paint(screen.recoveryDecision ? " 明确重新作答一次（原记录保留）" : screen.resume ? " 确认历史续跑（保留原计划和配置）" : " 确认任务", S.bold, S.yellow));
         lines.push(`   提供商/模型：${paint(`${s.profileId} / ${s.modelId}`, S.cyan, S.bold)}`);
         lines.push(`   模式：${paint(s.mode === "both" ? "without_tool + with_tool（独立作答、分别计分）" : s.mode, S.cyan, S.bold)}   ${paint(screen.resume ? "" : "[m 切换]", S.gray)}`);
+        if (s.mode === "with_tool" || s.mode === "both") {
+          lines.push(`   with_tool 工具：${paint(describeToolVersion("with_tool", this.tui.toolsVersion), S.cyan)}`);
+          lines.push(paint("   模型自主选择工具；无任意 Python/TypeScript 执行。", S.gray));
+        }
         lines.push(`   请求推理强度：${paint(s.thinkingLevel ?? "off", S.cyan)} ${paint(screen.resume ? "（原设置）" : "[t 切换 Pi 支持的等级]", S.gray)}`);
         lines.push(paint("   兼容端点支持情况以实际发送参数与服务端证据为准。", S.gray));
         lines.push(`   同时答题数：${paint(String(s.concurrency), S.bold)}   ${paint(screen.resume ? "（原设置）" : "[+/-]", S.gray)}`);
@@ -823,6 +828,10 @@ export class ExamApp implements Component {
         const t = r.totals;
         lines.push(paint(` ${r.offlineDemo ? "演示成绩" : "成绩"} ${screen.mode}`, S.bold, S.yellow) + paint(`  · run=${screen.runId}`, S.gray));
         lines.push(`   确认得分：${paint(`${t.confirmedRaw} / ${t.confirmedMax}`, S.green, S.bold)}   (计划满分 ${paint(String(t.plannedMax), S.cyan)})`);
+        if (r.toolVersions?.length) {
+          lines.push(`   工具版本：${r.toolVersions.map((v) => describeToolVersion(screen.mode, v)).join("；")}`);
+          if (screen.mode === "with_tool") lines.push(paint(`   ${TOOL_VERSION_COMPARABILITY}`, S.gray));
+        }
         lines.push(...coverageLines(r.coverage).flatMap((line) => wrapTextWithAnsi("   " + line, this.width)).map((line) => paint(line, S.gray)));
         if (r.metrics) {
           lines.push(paint(` 指标覆盖 ${r.metrics.recordedTrials}/${r.metrics.totalTrials} 题（包含复用答卷历史消耗）`, S.gray));

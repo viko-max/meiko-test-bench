@@ -11,6 +11,7 @@ import { prepareRecovery } from "../src/runner/recovery.js";
 import { TaskControlService } from "../src/service/task-service.js";
 import { ExamTui } from "../src/tui/controller.js";
 import { ExamApp } from "../src/tui/app.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import * as json from "../src/shared/json.js";
 
 const response = (tokens: number | null = 100, error = false) => {
@@ -39,7 +40,7 @@ function fixture(count = 3) {
     }, result: async () => apply(await source.result()) } as AssistantMessageEventStream;
   });
   faux.setResponses(Array.from({ length: 20 }, () => response()));
-  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath: "unused", runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: "v1", pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
+  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath: "unused", runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
   const params = { ...cfg, datasetDir, datasetId: "demo", modes: ["without_tool"] as Array<"without_tool" | "with_tool">, profileId: "faux", modelId: "faux-1", limit: count, limitsOverride: ProtectionLimitsSchema.parse({ maxOutputTokens: 128 }) };
   const service = new TaskControlService(); const tui = new ExamTui(cfg, service);
   return { cfg, params, faux, service, tui, datasetDir, root, setUsage: (values: Array<number | null>) => { usage = values; } };
@@ -116,7 +117,7 @@ describe("批次预算与明确异常补答", () => {
 
   it("每轮工具后的请求也经过预算，不在额度不足时继续发送", async () => {
     const s = fixture(1); s.setUsage([1800]);
-    s.faux.setResponses([fauxAssistantMessage(fauxToolCall("execute_typescript", { code: "console.log(2+2)" })), response()]);
+    s.faux.setResponses([fauxAssistantMessage(fauxToolCall("calculate", { expression: "2 + 2" })), response()]);
     const result = await runBatch({ ...s.params, modes: ["with_tool"], batchTokenLimit: 2400 });
     expect(s.faux.state.callCount).toBe(1);
     const detail = s.service.getTaskDetail(s.cfg.runsRoot, result.byMode.with_tool!.runId);
