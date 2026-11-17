@@ -1,0 +1,101 @@
+{
+  "$comment": "第二阶段 /review 决策模型的自写公开评估样本（离线使用，绝不包含真实评分材料）。字段：questionGroup（同组共享同一 dev/validation split）/ answer（答卷原文）/ expectedConclusion（人工结论 explicit|non-explicit）/ expectedOptions（人工确认的题面选项）/ expectedEvidence（必须与原文完全一致的证据片段）/ humanConfirmed（人工标注是否已确认）。",
+  "samples": [
+    {
+      "questionGroup": "single-choice-basic",
+      "answer": "最终答案选 B。解析：因为函数在定义域内单调递增，只有 B 满足条件。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["B"],
+      "expectedEvidence": ["最终答案选 B"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "single-choice-basic",
+      "answer": "综上，本题选 C。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["C"],
+      "expectedEvidence": ["本题选 C"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "mention-exclude",
+      "answer": "A 看似正确，但忽略了定义域限制，故不选 A；最终选 D。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["D"],
+      "expectedEvidence": ["最终选 D"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "mention-exclude",
+      "answer": "B 和 C 都不符合题意，答案应为 A。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["A"],
+      "expectedEvidence": ["答案应为 A"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "multi-select-aj",
+      "answer": "最终选择 A 和 J。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["A", "J"],
+      "expectedEvidence": ["A 和 J"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "multi-select-aj",
+      "answer": "应选 A、J 两项。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["A", "J"],
+      "expectedEvidence": ["A、J"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "no-conclusion",
+      "answer": "题目条件不足，无法确定最终结论。",
+      "expectedConclusion": "non-explicit",
+      "expectedOptions": [],
+      "expectedEvidence": [],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "no-conclusion",
+      "answer": "我可能算错了，这里不太确定，先给出推导过程。",
+      "expectedConclusion": "non-explicit",
+      "expectedOptions": [],
+      "expectedEvidence": [],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "numeric-unit",
+      "answer": "计算得 v = 3.6 km/h。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": [],
+      "expectedEvidence": ["3.6 km/h"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "numeric-unit",
+      "answer": "结果为 9.8 m/s²，方向竖直向下。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": [],
+      "expectedEvidence": ["9.8 m/s²"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "unicode-emoji",
+      "answer": "结论：选 A 🎉，确实成立。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["A"],
+      "expectedEvidence": ["选 A 🎉"],
+      "humanConfirmed": true
+    },
+    {
+      "questionGroup": "unicode-emoji",
+      "answer": "反复检查后，😀 最终答案是 C。",
+      "expectedConclusion": "explicit",
+      "expectedOptions": ["C"],
+      "expectedEvidence": ["最终答案是 C"],
+      "humanConfirmed": true
+    }
+  ]
+}

@@ -54,11 +54,15 @@ export class CollectionView {
       case "chat": return [{ label: "配置", run: () => { s.page = "settings"; } }, { label: "候选题", run: () => s.candidates() },
         { label: "历史", run: () => s.history() }, { label: "新会话", run: () => s.newConversation() }, { label: "停止", run: () => s.stop() },
         ...(s.publishedId ? [{ label: "创建测评", run: () => this.onRun?.(s.publishedId!) }] : [])];
-      case "settings": return [{ label: "选模型", run: () => s.chooseModels() }, { label: "搜索 Key", run: () => this.edit("search", "AnySearch Key（仅本次会话）", "", "search") },
+      case "settings": {
+        const provider = s.config.searchProvider;
+        return [{ label: "选模型", run: () => s.chooseModels() }, { label: `搜索：${provider === "deepseek" ? "DeepSeek" : "AnySearch"}`, run: () => s.setSearchProvider(provider === "deepseek" ? "anysearch" : "deepseek") },
+        { label: "搜索 Key", run: () => this.edit("search", `${provider === "deepseek" ? "DeepSeek" : "AnySearch"} Key（仅本次会话）`, "", "search") },
         { label: "模型 Key", run: () => this.edit("model", "模型 Key（仅本次会话）", "", "model") },
-        { label: "环境变量", run: () => s.setSearchMode("environment") }, { label: "匿名模式", run: () => s.setSearchMode("anonymous") },
+        { label: "环境变量", run: () => s.setSearchMode("environment") }, ...(provider === "anysearch" ? [{ label: "匿名模式", run: () => s.setSearchMode("anonymous") }] : []),
         { label: "验证搜索", run: () => s.prepare("searchProbe") }, { label: "验证模型", run: () => s.prepare("modelProbe") },
         { label: "推理等级", run: () => s.cycleThinking() }, { label: "保存配置", run: () => s.savePreferences() }, back];
+      }
       case "models": return [{ label: "选择", run: () => s.selectModel(this.visibleModels[s.modelIndex] ?? -1) },
         { label: "筛选", run: () => this.edit("filter", "模型筛选", this.modelFilter) }, back];
       case "history": return [{ label: "打开", run: () => s.openHistory() }, back];
@@ -79,7 +83,8 @@ export class CollectionView {
     return [["datasetId", "题集标识", s.config.datasetId], ["version", "题集版本", s.config.version],
       ["targetCount", "目标题数", String(s.config.targetCount ?? "未指定")],
       ["maxTotalTokens", "会话 Token 上限", String(s.config.limits.maxTotalTokens)], ["maxSearchRequests", "搜索请求上限", String(s.config.limits.maxSearchRequests)],
-      ["maxExtractRequests", "正文提取上限", String(s.config.limits.maxExtractRequests)], ["maxOutputTokens", "单次输出 Token", String(s.config.limits.maxOutputTokens)],
+      ["maxExtractRequests", "正文提取上限", String(s.config.limits.maxExtractRequests)], ["maxFetchRequests", "正文抓取上限(DeepSeek)", String(s.config.limits.maxFetchRequests)],
+      ["maxSearchSpendYuan", "搜索费用估算上限(元)", String(s.config.limits.maxSearchSpendYuan)], ["maxOutputTokens", "单次输出 Token", String(s.config.limits.maxOutputTokens)],
       ["maxCandidates", "候选题数量上限", String(s.config.limits.maxCandidates)], ["maxModelRequests", "模型请求上限", String(s.config.limits.maxModelRequests)],
       ["requestTimeoutMs", "请求超时（秒）", String(s.config.limits.requestTimeoutMs / 1000)], ["turnTimeoutMs", "单次对话时限（秒）", String(s.config.limits.turnTimeoutMs / 1000)]];
   }
@@ -115,7 +120,10 @@ export class CollectionView {
     if (s.page === "chat") {
       body.push(cyan(s.busy ? "搜题进行中" : "对话搜题与组卷"));
       const budget = s.session ? s.service.budget(s.session.id) : null, metrics = s.metrics();
-      body.push(`候选 ${s.session?.candidates.length ?? 0} · 已选 ${s.selected.length} · 搜索 ${s.session?.counts.search ?? 0}/${s.config.limits.maxSearchRequests} · 提取 ${s.session?.counts.extract ?? 0}/${s.config.limits.maxExtractRequests}`);
+      const deepseekUsage = s.session?.deepseekUsage;
+      body.push(s.config.searchProvider === "deepseek"
+        ? `候选 ${s.session?.candidates.length ?? 0} · 已选 ${s.selected.length} · 搜索 ${s.session?.counts.search ?? 0}/${s.config.limits.maxSearchRequests} · 抓取 ${s.session?.counts.fetch ?? 0}/${s.config.limits.maxFetchRequests} · 估算费用 ¥${((deepseekUsage?.search.estimatedYuan ?? 0) + (deepseekUsage?.fetch.estimatedYuan ?? 0)).toFixed(3)}/${s.config.limits.maxSearchSpendYuan} 元`
+        : `候选 ${s.session?.candidates.length ?? 0} · 已选 ${s.selected.length} · 搜索 ${s.session?.counts.search ?? 0}/${s.config.limits.maxSearchRequests} · 提取 ${s.session?.counts.extract ?? 0}/${s.config.limits.maxExtractRequests}`);
       const progress = s.progress();
       body.push(...wrap(progress ? `目标 ${progress.target ?? "未指定"} · 有效候选 ${progress.accepted} · 缺口 ${progress.remaining ?? "未指定"} · 待核验评分 ${progress.awaitingScoringReview}` : `目标题数 ${s.config.targetCount ?? "未指定"} · 输入学科、难度及来源要求开始搜题`));
       body.push(`Token 已知 ${budget?.knownTokens ?? 0} · 剩余 ${budget?.remainingTokens ?? s.config.limits.maxTotalTokens}${budget?.unknownRequests ? " · 有未知用量" : ""}`);
@@ -135,8 +143,9 @@ export class CollectionView {
       body.push(...messages.slice(this.scroll, this.scroll + room));
     } else if (s.page === "settings") {
       const credentials = s.credentials();
-      body.push(cyan("搜索与模型配置"), ...wrap(`模型 ${s.config.profileId}/${s.config.modelId} · 推理 ${s.config.thinkingLevel}`),
-        ...wrap(`搜索：${credentials.mode} · ${credentials.searchReady ? "已配置" : "缺少 Key"} · ${s.searchVerified ? "连接已验证" : "连接未验证"}`),
+      body.push(cyan("搜索与模型配置"), ...wrap(`整理模型与搜索服务相互独立，可分别选择与验证。`),
+        ...wrap(`模型 ${s.config.profileId}/${s.config.modelId} · 推理 ${s.config.thinkingLevel}`),
+        ...wrap(`搜索：${s.config.searchProvider === "deepseek" ? "DeepSeek Search/Fetch（禁止匿名）" : "AnySearch"} · ${credentials.mode} · ${credentials.searchReady ? "已配置" : "缺少 Key"} · ${s.searchVerified ? "连接已验证" : "连接未验证"}`),
         ...wrap(`模型 Key：${credentials.modelReady ? "已配置" : "未配置"} · ${s.modelVerified ? "连接已验证" : "连接未验证"}`));
       const fields = this.configFields(), room = Math.max(1, height - toolbar.length - body.length - 2);
       const start = Math.max(0, Math.min(this.configIndex - room + 1, fields.length - room));

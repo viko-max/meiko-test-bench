@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { AnySearchClient } from "../providers/anysearch.js";
+import { DeepSeekSearchClient } from "../providers/deepseek-search.js";
 import { CollectionService } from "../service/collection-service.js";
 import { COLLECTION_WORKFLOW_VERSION, CollectionConfigSchema, type CollectionConfig, type CollectionSession } from "../shared/collection.js";
 import { collectionProgress } from "../service/collection-workflow.js";
@@ -14,6 +15,8 @@ import { resolveModel, type Registry } from "../providers/pi-adapter.js";
 import { summarizeRequests } from "../shared/metrics.js";
 
 const MEMORY_SEARCH = "MEIKO_SESSION_ANYSEARCH_KEY";
+/** 搜索客户端工厂返回值：AnySearch 或 DeepSeek Search/Fetch。 */
+export type CollectionClient = AnySearchClient | DeepSeekSearchClient;
 export interface CollectionModelChoice { profileId: string; modelId: string; label: string; baseUrl: string }
 export type CollectionPage = "chat" | "settings" | "models" | "history" | "candidates" | "candidate" | "confirm" | "publish";
 type Confirmation = { kind: "send" | "searchProbe" | "modelProbe" | "stage" | "publish"; digest: string; input?: string; parent: CollectionPage };
@@ -21,7 +24,7 @@ export interface CollectionWorkspaceOptions {
   importRoot: string; datasetsRoot: string;
   registry: (config: Pick<CollectionConfig, "profileId" | "modelId">) => Registry;
   models: () => CollectionModelChoice[];
-  client?: (config: CollectionConfig, getApiKey: () => string | undefined) => AnySearchClient;
+  client?: (config: CollectionConfig, getApiKey: () => string | undefined) => CollectionClient;
 }
 
 export class CollectionWorkspace {
@@ -71,9 +74,12 @@ export class CollectionWorkspace {
   subscribe(observer: () => void): () => void { this.observers.add(observer); return () => this.observers.delete(observer); }
   private emit(): void { for (const observer of this.observers) observer(); }
   private modelKey(): string { return `${this.config.profileId}/${this.config.modelId}`; }
-  private client(config = this.config): AnySearchClient {
+  private client(config = this.config): CollectionClient {
     const getApiKey = () => config.apiKeyEnv === MEMORY_SEARCH ? this.searchSecret : undefined;
-    return this.options.client?.(config, getApiKey) ?? new AnySearchClient({ apiKeyEnv: config.apiKeyEnv, getApiKey, timeoutMs: config.limits.requestTimeoutMs });
+    if (this.options.client) return this.options.client(config, getApiKey);
+    return config.searchProvider === "deepseek"
+      ? new DeepSeekSearchClient({ apiKeyEnv: config.apiKeyEnv ?? "DEEPSEEK_API_KEY", getApiKey, timeoutMs: config.limits.requestTimeoutMs })
+      : new AnySearchClient({ apiKeyEnv: config.apiKeyEnv, getApiKey, timeoutMs: config.limits.requestTimeoutMs });
   }
   redact(text: string): string {
     for (const key of [this.searchSecret, ...this.modelSecrets.values()]) if (key) text = text.split(key).join("[密钥已隐藏]");
@@ -109,8 +115,23 @@ export class CollectionWorkspace {
     this.message = "密钥仅供本次进程使用，关闭程序后需重新配置。"; this.emit();
   }
   setSearchMode(mode: "environment" | "anonymous"): void {
-    this.editable(); this.config = { ...this.config, apiKeyEnv: mode === "environment" ? "ANYSEARCH_API_KEY" : undefined };
-    this.searchVerified = false; this.message = mode === "anonymous" ? "已选择匿名访问，服务配额可能较低。" : "使用 ANYSEARCH_API_KEY 环境变量。"; this.emit();
+    this.editable();
+    if (mode === "anonymous" && this.config.searchProvider === "deepseek") throw new Error("DeepSeek 搜题禁止匿名访问，请配置 DEEPSEEK_API_KEY 环境变量或输入本次会话 Key。");
+    this.config = { ...this.config, apiKeyEnv: mode === "environment" ? (this.config.searchProvider === "deepseek" ? "DEEPSEEK_API_KEY" : "ANYSEARCH_API_KEY") : undefined };
+    this.searchVerified = false; this.message = mode === "anonymous" ? "已选择匿名访问，服务配额可能较低。" : `使用 ${this.config.apiKeyEnv} 环境变量。`; this.emit();
+  }
+  setSearchProvider(provider: "anysearch" | "deepseek"): void {
+    this.editable();
+    if (provider === this.config.searchProvider) return;
+    const apiKeyEnv = provider === "deepseek"
+      ? (this.config.apiKeyEnv === MEMORY_SEARCH ? MEMORY_SEARCH : "DEEPSEEK_API_KEY")
+      : (this.config.apiKeyEnv === MEMORY_SEARCH ? MEMORY_SEARCH : "ANYSEARCH_API_KEY");
+    this.config = CollectionConfigSchema.parse({ ...this.config, searchProvider: provider, apiKeyEnv });
+    this.searchVerified = false;
+    this.message = provider === "deepseek"
+      ? "已切换 DeepSeek Search/Fetch；禁止匿名，凭据经 DEEPSEEK_API_KEY 或本次会话 Key 提供。整理模型与搜索服务相互独立。"
+      : "已切换 AnySearch；可配置 ANYSEARCH_API_KEY 或选择匿名模式。整理模型与搜索服务相互独立。";
+    this.emit();
   }
   setField(field: string, text: string): void {
     if (field === "reviewer" || field === "reviewReason") { if (this.busy) throw new Error("请先等待运行结束。"); this[field] = text; return; }
@@ -118,10 +139,15 @@ export class CollectionWorkspace {
     if (field === "datasetId" || field === "version") this.config = CollectionConfigSchema.parse({ ...this.config, [field]: text.trim() });
     else if (field === "targetCount") this.config = CollectionConfigSchema.parse({ ...this.config, targetCount: Number(text) });
     else {
-      if (!text.trim() || !Number.isSafeInteger(Number(text)) || Number(text) <= 0) throw new Error("请输入正整数。");
-      const allowed = ["maxTotalTokens", "maxSearchRequests", "maxExtractRequests", "maxOutputTokens", "maxCandidates", "maxModelRequests", "requestTimeoutMs", "turnTimeoutMs"];
+      const allowed = ["maxTotalTokens", "maxSearchRequests", "maxExtractRequests", "maxOutputTokens", "maxCandidates", "maxModelRequests", "requestTimeoutMs", "turnTimeoutMs", "maxFetchRequests", "maxSearchSpendYuan"];
       if (!allowed.includes(field)) throw new Error("不支持的搜题设置。");
       const count = Number(text);
+      if (field === "maxSearchSpendYuan") {
+        if (!text.trim() || !Number.isFinite(count) || count <= 0) throw new Error("请输入正数（元）。");
+        this.config = CollectionConfigSchema.parse({ ...this.config, limits: { ...this.config.limits, [field]: count } });
+        this.emit(); return;
+      }
+      if (!text.trim() || !Number.isSafeInteger(Number(text)) || Number(text) <= 0) throw new Error("请输入正整数。");
       if (field.endsWith("Ms") && count > 2147483) throw new Error("时间不能超过 2147483 秒。");
       this.config = CollectionConfigSchema.parse({ ...this.config, limits: { ...this.config.limits, [field]: field.endsWith("Ms") ? count * 1000 : count } });
     }
@@ -190,10 +216,14 @@ export class CollectionWorkspace {
     if (confirmation.kind === "stage") return ["生成待核对草稿", `题目：${this.selected.filter((id) => !this.excluded.includes(id)).join("、")}`,
       this.includeScoring ? `采用评分建议 · 核对人 ${this.reviewer} · ${this.reviewReason}` : "评分建议留在来源中，草稿暂不计分。", "生成草稿后仍需单独确认入库。"];
     if (confirmation.kind === "publish") return ["确认发布题集", `${this.draft?.datasetId} · ${this.draft?.questions.length} 题`, "已有版本不会被覆盖，来源及修改历史保留。"];
+    if (confirmation.kind === "searchProbe" && this.config.searchProvider === "deepseek") return ["验证 DeepSeek 搜索连接", "POST https://api.deepseek.com/v1/tools/search", `访问身份：${this.credentials().mode}`, "发送 1 次 count=1 搜索；若有结果可能按官方刊例价（估算 0.005 元/次）计费，剩余额度以供应商记录为准。"];
     if (confirmation.kind === "searchProbe") return ["验证 AnySearch 连接", "https://api.anysearch.com/v1/sub-domains", `访问身份：${this.credentials().mode}`, "发送 1 次领域查询，可能消耗搜索服务配额。"];
+    const searchLimits = this.config.searchProvider === "deepseek"
+      ? `搜索上限 ${this.config.limits.maxSearchRequests} · 抓取上限 ${this.config.limits.maxFetchRequests} · 费用估算上限 ${this.config.limits.maxSearchSpendYuan} 元（官方刊例价估算）`
+      : `搜索上限 ${this.config.limits.maxSearchRequests} · 提取上限 ${this.config.limits.maxExtractRequests}`;
     return [confirmation.kind === "modelProbe" ? "验证模型连接 · 1 次请求，无搜索工具" : "确认发送搜题消息", `模型：${this.config.profileId} / ${this.config.modelId}`,
       `接口：${model?.baseUrl || registry.profilesById.get(this.config.profileId)?.baseUrl || "未选择"}`, `推理：${confirmation.kind === "modelProbe" ? "off" : this.config.thinkingLevel}`,
-      confirmation.kind === "modelProbe" ? "输出最多 128 Token，整体最多 30 秒；费用未核实。" : `Token 剩余额度：${budget?.remainingTokens ?? this.config.limits.maxTotalTokens} · 搜索上限 ${this.config.limits.maxSearchRequests} · 提取上限 ${this.config.limits.maxExtractRequests}`,
+      confirmation.kind === "modelProbe" ? "输出最多 128 Token，整体最多 30 秒；费用未核实。" : `Token 剩余额度：${budget?.remainingTokens ?? this.config.limits.maxTotalTokens} · ${searchLimits}`,
       ...(confirmation.kind === "send" ? [`目标题数：${this.config.targetCount ?? "未指定，按对话要求"}；候选上限：${this.config.limits.maxCandidates}`, confirmation.input ?? "", "模型与搜索服务可能计费；未知结果不会自动重发。"] : [])];
   }
   private digest(): string { return sha256OfJsonable({ config: this.config, session: this.session, selected: this.selected, excluded: this.excluded, reviewer: this.reviewer, reason: this.reviewReason, includeScoring: this.includeScoring, draft: this.draft }); }
@@ -217,7 +247,11 @@ export class CollectionWorkspace {
       }
       this.probeAbort = new AbortController();
       if (confirmation.kind === "searchProbe") {
-        await this.client().getSubDomains(["academic"], this.probeAbort.signal); this.searchVerified = true; this.message = "AnySearch 连接验证通过；剩余配额未知。"; return;
+        if (this.config.searchProvider === "deepseek") {
+          await (this.client() as DeepSeekSearchClient).search({ query: "connection check", count: 1 }, { signal: this.probeAbort.signal });
+          this.searchVerified = true; this.message = "DeepSeek 搜索连接验证通过（1 次 count=1 搜索）；若有结果可能按次计费，剩余额度以供应商记录为准。"; return;
+        }
+        await (this.client() as AnySearchClient).getSubDomains(["academic"], this.probeAbort.signal); this.searchVerified = true; this.message = "AnySearch 连接验证通过；剩余配额未知。"; return;
       }
       const registry = this.options.registry(this.config);
       if (confirmation.kind === "modelProbe") {
