@@ -49,10 +49,27 @@ function formulaAnomalies(stem: string): string[] {
 
 export function checkDraft(draft: DraftDataset, opts: { sourceDir?: string } = {}): ConvertCheck {
   const questions: QuestionIssue[] = [];
-  const datasetIssues: string[] = [...(draft.errors ?? [])];
+  const isOcr = draft.format === "ocr";
+  const datasetIssues: string[] = [];
   const warnings: string[] = [];
   const seen = new Set<string>();
   try { validateImportId(draft.datasetId); } catch (error) { datasetIssues.push((error as Error).message); }
+
+  // OCR 草稿（phase 1）：全局识别状态决定可否入库；逐题识别问题在人工编辑
+  // 保存（ocrCheckedAt）后视为已核对，但 partial / failed / outcome_unknown
+  // 绝不能凭点击确认绕过。
+  let ocrAllChecked = false;
+  if (isOcr) {
+    const ocr = draft.ocr;
+    if (!ocr) datasetIssues.push("OCR 草稿缺少识别元数据，请重新导入。");
+    else if (ocr.status !== "completed") {
+      datasetIssues.push(ocr.status === "outcome_unknown"
+        ? "OCR 识别结果未知（请求可能已在服务端处理并计费），不能入库；请核对供应商记录后重新导入。"
+        : `OCR 识别未完成（${ocr.status}），不能入库。`);
+    }
+    ocrAllChecked = draft.questions.length > 0 && draft.questions.every((q) => !!q.ocrCheckedAt);
+  }
+  if (!isOcr || !ocrAllChecked) datasetIssues.push(...(draft.errors ?? []));
 
   for (const q of draft.questions) {
     const issues: string[] = [];
@@ -69,7 +86,7 @@ export function checkDraft(draft: DraftDataset, opts: { sourceDir?: string } = {
         assertScoring(scoringSpec(q)!, publicQuestion(q));
       }
     } catch (error) { issues.push((error as Error).message); }
-    issues.push(...(q.conversionIssues ?? []));
+    if (!isOcr || !q.ocrCheckedAt) issues.push(...(q.conversionIssues ?? []));
     if ([q.stem, ...Object.values(q.options ?? {}), ...(q.parts ?? []).map((part) => part.prompt)].some(mixedScoringContent)) issues.push("题面疑似混入答案或解析，请分离材料后重新导入。");
     issues.push(...formulaAnomalies(q.stem));
     if (opts.sourceDir || existsSync(q.sourceFile)) {

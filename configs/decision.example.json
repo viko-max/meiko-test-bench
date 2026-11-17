@@ -1,0 +1,69 @@
+{
+  "$comment": "第二阶段 /review 决策模型配置（复制为 configs/decision.json 使用；该文件已 gitignore，只引用凭据环境变量名，绝不保存 key 值）。enabled=false 的条目是模板或候选说明，不发起请求。",
+  "profiles": [
+    {
+      "id": "ant-decision",
+      "displayName": "蚂蚁决策 (lingdt-decision)",
+      "baseUrl": "https://maas-api.antdigital.com/v1/systemone",
+      "apiKeyEnv": "ANT_DECISION_API_KEY",
+      "model": "lingdt-decision-1.0",
+      "envelope": "ant",
+      "capabilities": ["choice", "noul", "multi-choice", "extract"],
+      "enabled": true
+    },
+    {
+      "id": "xiangxin-decision",
+      "displayName": "象信决策 (xiangxin-3.8)",
+      "baseUrl": "https://api.xiangxinai.cn/v1/systemone",
+      "apiKeyEnv": "XIANGXIN_API_KEY",
+      "model": "xiangxin-3.8",
+      "envelope": "standard",
+      "capabilities": ["choice", "noul", "span"],
+      "enabled": true
+    },
+    {
+      "id": "bailian-decision",
+      "displayName": "百炼决策 (decision-model-preview)",
+      "baseUrl": "https://dashscope.aliyuncs.com/api/v1/systemone",
+      "apiKeyEnv": "DASHSCOPE_API_KEY",
+      "model": "decision-model-preview",
+      "envelope": "standard",
+      "capabilities": ["choice", "noul"],
+      "enabled": false,
+      "notes": "可扩展模板：把 baseUrl 改成含 workspace 的完整地址后可启用；仅 choice/noul。"
+    },
+    {
+      "id": "volcano-decision",
+      "displayName": "火山决策 (候选)",
+      "baseUrl": "https://example.invalid/v1/systemone",
+      "apiKeyEnv": "VOLCANO_DECISION_API_KEY",
+      "model": "volcano-decision-preview",
+      "envelope": "standard",
+      "capabilities": ["choice", "noul"],
+      "enabled": false,
+      "notes": "候选 provider，路由未实现，仅作能力对照说明。"
+    },
+    {
+      "id": "startlux-decision",
+      "displayName": "星耀决策 (候选)",
+      "baseUrl": "https://example.invalid/v1/systemone",
+      "apiKeyEnv": "STARTLUX_DECISION_API_KEY",
+      "model": "startlux-decision-preview",
+      "envelope": "standard",
+      "capabilities": ["choice", "noul"],
+      "enabled": false,
+      "notes": "候选 provider，路由未实现，仅作能力对照说明。"
+    },
+    {
+      "id": "sii-decision",
+      "displayName": "智脑决策 (候选)",
+      "baseUrl": "https://example.invalid/v1/systemone",
+      "apiKeyEnv": "SII_DECISION_API_KEY",
+      "model": "sii-decision-preview",
+      "envelope": "standard",
+      "capabilities": ["choice", "noul"],
+      "enabled": false,
+      "notes": "候选 provider，路由未实现，仅作能力对照说明。"
+    }
+  ]
+}

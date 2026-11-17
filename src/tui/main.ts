@@ -8,6 +8,7 @@
 import { runExamTui } from "./app.js";
 import { join } from "node:path";
 import { createDemoRegistry } from "../providers/offline-demo.js";
+import { EXAM_TOOLS_VERSION } from "../tools/index.js";
 
 async function main(): Promise<void> {
   const demo = process.argv.includes("--demo");
@@ -24,7 +25,7 @@ async function main(): Promise<void> {
       importRoot: join(demoRoot, "drafts"),
       offlineDemo: { sourcePath, registry: await createDemoRegistry(sourcePath) },
     } : {}),
-    toolsVersion: "v1",
+    toolsVersion: EXAM_TOOLS_VERSION,
     pythonInterpreter: "pyenv/.venv/Scripts/python.exe",
     limitsPath: "configs/limits.json",
     authorisePaid,

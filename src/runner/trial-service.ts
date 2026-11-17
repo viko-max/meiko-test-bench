@@ -26,7 +26,7 @@ import { RunStore } from "../storage/run-store.js";
 import type { TrialRecorder } from "../storage/recorder.js";
 import { buildAgent } from "./agent-factory.js";
 import { LimitGuard } from "./limits.js";
-import { PROMPT_VERSION, buildSystemPrompt } from "./prompts.js";
+import { buildSystemPrompt } from "./prompts.js";
 import { runTrial } from "./run-trial.js";
 import { assertExecutionLease, withExecutionLease, type ExecutionLease } from "./execution-lock.js";
 import { RequestMetricsCollector } from "./request-metrics.js";
@@ -111,7 +111,7 @@ async function runOneTrialLocked(p: RunOneTrialParams): Promise<RunOneTrialResul
       modelId: p.runSpec.modelId,
       mode: p.runSpec.mode,
       configDigest,
-      promptVersion: PROMPT_VERSION,
+      promptVersion: p.runSpec.promptVersion,
       toolsVersion: p.toolsVersion,
       questionContentDigest: p.runSpec.questionContentDigest,
     },
@@ -140,7 +140,7 @@ async function runOneTrialLocked(p: RunOneTrialParams): Promise<RunOneTrialResul
       modelId: p.runSpec.modelId,
       mode: p.runSpec.mode,
       configDigest,
-      promptVersion: PROMPT_VERSION,
+      promptVersion: p.runSpec.promptVersion,
       toolsVersion: p.toolsVersion,
       executionStatus,
       executionPolicyVersion: EXECUTION_POLICY_VERSION,
@@ -180,7 +180,7 @@ async function runOneTrialLocked(p: RunOneTrialParams): Promise<RunOneTrialResul
       writeJsonAtomic(join(store.trialDir(trialId), "attempt.json"), {
         trialId, runId, datasetId: p.runSpec.datasetId, datasetVersion: p.runSpec.datasetVersion, questionId: p.runSpec.questionId,
         questionVersion: p.runSpec.questionVersion, provider: p.runSpec.provider, modelId: p.runSpec.modelId, mode: p.runSpec.mode,
-        configDigest, promptVersion: PROMPT_VERSION, toolsVersion: p.toolsVersion, status: "dispatched", startedAt,
+        configDigest, promptVersion: p.runSpec.promptVersion, toolsVersion: p.toolsVersion, status: "dispatched", startedAt,
         questionContentDigest: p.runSpec.questionContentDigest,
       });
     }
@@ -188,7 +188,7 @@ async function runOneTrialLocked(p: RunOneTrialParams): Promise<RunOneTrialResul
 
     // --- stage 2: the model call (runTrial never throws) ---
     const toolStarts = new Map<string, number>();
-    const outcome = await runTrial({ agent, question: p.question, guard, recorder, images: p.images, signal: p.signal, onEvent: (event) => {
+    const outcome = await runTrial({ agent, question: p.question, guard, recorder, images: p.images, signal: p.signal, includeAssetRefs: p.runSpec.mode === "with_tool", onEvent: (event) => {
       if (event.type === "tool_execution_start") {
         metrics.toolCalls++;
         toolStarts.set(event.toolCallId, performance.now());
@@ -206,7 +206,7 @@ async function runOneTrialLocked(p: RunOneTrialParams): Promise<RunOneTrialResul
     const trial = TrialSchema.parse({
       trialId, datasetId: p.runSpec.datasetId, datasetVersion: p.runSpec.datasetVersion, questionId: p.runSpec.questionId,
       questionVersion: p.runSpec.questionVersion, provider: p.runSpec.provider, modelId: p.runSpec.modelId, mode: p.runSpec.mode,
-      configDigest, promptVersion: PROMPT_VERSION, toolsVersion: p.toolsVersion, executionStatus: outcome.executionStatus as ExecutionStatus,
+      configDigest, promptVersion: p.runSpec.promptVersion, toolsVersion: p.toolsVersion, executionStatus: outcome.executionStatus as ExecutionStatus,
       truncated: outcome.truncated, finalAnswerSheet: outcome.finalAnswerSheet, stopReason: outcome.stopReason, errorMessage: outcome.errorMessage,
       terminationCause: outcome.terminationCause,
       executionPolicyVersion: EXECUTION_POLICY_VERSION,
@@ -219,13 +219,13 @@ async function runOneTrialLocked(p: RunOneTrialParams): Promise<RunOneTrialResul
     let archiveError: string | undefined = metricsArchiveError;
     if (!p.recorder) {
       try {
-        store.writeRunSnapshot({ runId, configDigest, promptVersion: PROMPT_VERSION, toolsVersion: p.toolsVersion, executionPolicyVersion: EXECUTION_POLICY_VERSION, startedAt });
+        store.writeRunSnapshot({ runId, configDigest, promptVersion: p.runSpec.promptVersion, toolsVersion: p.toolsVersion, executionPolicyVersion: EXECUTION_POLICY_VERSION, startedAt });
         if (p.persistTrial) p.persistTrial(trial);
         else writeJsonAtomic(join(store.trialDir(trialId), "trial.json"), trial);
         writeJsonAtomic(join(store.trialDir(trialId), "attempt.json"), {
           trialId, runId, datasetId: p.runSpec.datasetId, datasetVersion: p.runSpec.datasetVersion, questionId: p.runSpec.questionId,
           questionVersion: p.runSpec.questionVersion, provider: p.runSpec.provider, modelId: p.runSpec.modelId, mode: p.runSpec.mode,
-          configDigest, promptVersion: PROMPT_VERSION, toolsVersion: p.toolsVersion, status: trial.executionStatus, startedAt, endedAt,
+          configDigest, promptVersion: p.runSpec.promptVersion, toolsVersion: p.toolsVersion, status: trial.executionStatus, startedAt, endedAt,
           questionContentDigest: p.runSpec.questionContentDigest,
         });
       } catch (e) {

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="640" viewBox="0 0 900 640" font-family="serif">
+  <rect width="900" height="640" fill="#ffffff"/>
+  <text x="450" y="44" text-anchor="middle" font-size="26" font-weight="bold">自写公开样卷：公式、表格与配图（OCR 测试用）</text>
+
+  <text x="60" y="100" font-size="22" font-weight="bold">1. 已知二次函数 $f(x)=x^{2}-2x-3$，求其顶点坐标。</text>
+  <text x="80" y="136" font-size="20">配方法：$f(x)=(x-1)^{2}-4$，故顶点为 $(1,-4)$。</text>
+
+  <text x="60" y="196" font-size="22" font-weight="bold">2. 某班 5 名同学身高（cm）如下表，求平均身高。</text>
+  <!-- 可视表格 -->
+  <g font-size="20">
+    <rect x="120" y="216" width="120" height="40" fill="none" stroke="#000000"/>
+    <rect x="240" y="216" width="120" height="40" fill="none" stroke="#000000"/>
+    <rect x="360" y="216" width="120" height="40" fill="none" stroke="#000000"/>
+    <rect x="120" y="256" width="120" height="40" fill="none" stroke="#000000"/>
+    <rect x="240" y="256" width="120" height="40" fill="none" stroke="#000000"/>
+    <rect x="360" y="256" width="120" height="40" fill="none" stroke="#000000"/>
+    <text x="180" y="243" text-anchor="middle">同学</text>
+    <text x="300" y="243" text-anchor="middle">甲</text>
+    <text x="420" y="243" text-anchor="middle">乙</text>
+    <text x="180" y="283" text-anchor="middle">身高</text>
+    <text x="300" y="283" text-anchor="middle">160</text>
+    <text x="420" y="283" text-anchor="middle">170</text>
+  </g>
+  <text x="80" y="336" font-size="20">平均值 $\bar{x}=\frac{160+170}{2}=165$（cm）。</text>
+
+  <text x="60" y="396" font-size="22" font-weight="bold">3. 如图，圆 $O$ 半径为 $r=2$，求面积。</text>
+  <!-- 简单配图 -->
+  <g>
+    <circle cx="240" cy="500" r="80" fill="none" stroke="#1a56db" stroke-width="3"/>
+    <line x1="240" y1="500" x2="320" y2="500" stroke="#1a56db" stroke-width="3"/>
+    <text x="272" y="492" text-anchor="middle" font-size="18" fill="#1a56db">r=2</text>
+    <text x="240" y="506" text-anchor="middle" font-size="14">O</text>
+    <text x="240" y="610" text-anchor="middle" font-size="18">（配图：圆与半径示意）</text>
+  </g>
+  <text x="480" y="500" font-size="20">面积 $S=\pi r^{2}=4\pi$。</text>
+</svg>

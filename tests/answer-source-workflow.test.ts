@@ -10,6 +10,7 @@ import * as archive from "../src/runner/archive.js";
 import { TaskControlService } from "../src/service/task-service.js";
 import { ReviewService } from "../src/service/review-service.js";
 import { ExamTui } from "../src/tui/controller.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 
 // 新建的验证材料保留在 .work，不删除，也不改正式题库和历史运行。
 function setup(open = false) {
@@ -27,7 +28,7 @@ function setup(open = false) {
   models.setProvider(faux.provider);
   faux.setResponses(Array.from({ length: 8 }, () => fauxAssistantMessage("Answer: B")));
   const profile = ModelProfileSchema.parse({ id: "faux", displayName: "Faux", provider: "faux", api: "faux", baseUrl: "https://faux.example/v1", auth: { envVars: ["FAUX_KEY"] }, models: [{ id: "faux-1", name: "Faux", input: ["text"], reasoning: false, contextWindow: 4096, maxTokens: 1024 }], capability: {} });
-  const params: BatchParams = { datasetId: "demo", datasetDir: dataset, modes: ["without_tool"], profileId: "faux", modelId: "faux-1", limit: 1, runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: "v1", pythonInterpreter: "python", modelsConfigPath: "unused", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
+  const params: BatchParams = { datasetId: "demo", datasetDir: dataset, modes: ["without_tool"], profileId: "faux", modelId: "faux-1", limit: 1, runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", modelsConfigPath: "unused", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
   const task = new TaskControlService();
   const review = new ReviewService(params.runsRoot, dataset, "demo");
   const tui = new ExamTui({ datasetsRoot: join(root, "datasets"), modelsConfigPath: "unused", runsRoot: params.runsRoot, workRoot: params.workRoot, toolsVersion: "v1", pythonInterpreter: "python" });

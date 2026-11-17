@@ -7,6 +7,7 @@ import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { ExamTui } from "../src/tui/controller.js";
 import { ExamApp } from "../src/tui/app.js";
 import { prepareMascotImage } from "../src/tui/mascot.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 
 describe("用户通过 TUI 完成整次测评", () => {
   it("导入、核对、入库、双模式、真实工具、指标、复核与续跑均由界面入口串联", async () => {
@@ -28,12 +29,12 @@ describe("用户通过 TUI 完成整次测评", () => {
     models.setProvider(faux.provider);
     const contexts: string[] = [];
     const replies = ["Answer: B", "Answer: 7", "通过独立方法核对结果。", "Answer: B",
-      fauxToolCall("execute_typescript", { code: "console.log(3 + 4);" }), "Answer: 7", "通过独立方法核对结果。"];
+      fauxToolCall("calculate", { expression: "3 + 4" }), "Answer: 7", "通过独立方法核对结果。"];
     faux.setResponses(replies.map((reply) => (context) => { contexts.push(JSON.stringify(context)); return fauxAssistantMessage(reply); }));
     const modelsConfigPath = join(root, "models.json");
     writeFileSync(modelsConfigPath, JSON.stringify({ version: "1", profiles: [profile] }));
     const cfg = { datasetsRoot, modelsConfigPath, runsRoot: join(root, "runs"), workRoot: join(root, "work"), importRoot: join(root, "drafts"),
-      toolsVersion: "v1", pythonInterpreter: "python", animation: false, registryOverride: { models, profilesById: new Map([[profile.id, profile]]) } };
+      toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", animation: false, registryOverride: { models, profilesById: new Map([[profile.id, profile]]) } };
     const tui = new ExamTui(cfg), app = new ExamApp(tui);
     app.rerender = vi.fn();
     vi.spyOn(app as any, "termRows").mockReturnValue(24);
@@ -85,6 +86,8 @@ describe("用户通过 TUI 完成整次测评", () => {
       app.handleInput("m"); app.handleInput("m");
       const confirm = screen();
       expect(confirm.kind === "confirm" && confirm.setup.mode).toBe("both");
+      expect(render()).toContain("v2-restricted（受限计算、附件与图像工具）");
+      expect(render()).toContain("模型自主选择工具；无任意 Python/TypeScript 执行");
       render(); enter(); await expectScreen("run");
       const taskId = tui.getState().taskId!;
       const status = await tui.getService().whenDone(taskId);
@@ -92,7 +95,7 @@ describe("用户通过 TUI 完成整次测评", () => {
       expect(status?.runIds).toHaveLength(2);
       expect(faux.state.callCount).toBe(7);
       expect(contexts.every((context) => !context.includes("PRIVATE_JOURNEY_STANDARD"))).toBe(true);
-      expect(contexts.some((context) => /--- stdout ---\\n7/.test(context))).toBe(true);
+      expect(contexts.some((context) => context.includes("result = 7"))).toBe(true);
       const runtime = render();
       expect(runtime).toContain("Token");
       expect(runtime).toContain("TPS");
@@ -101,6 +104,9 @@ describe("用户通过 TUI 完成整次测评", () => {
       const result = screen();
       expect(result.kind === "report" && result.mode).toBe("with_tool");
       expect(result.kind === "report" && result.report.totals).toEqual({ confirmedRaw: 2, confirmedMax: 2, plannedMax: 4 });
+      expect(result.kind === "report" && result.report.toolVersions).toEqual([EXAM_TOOLS_VERSION]);
+      expect(render()).toContain("v2-restricted（受限计算、附件与图像工具）");
+      expect(render()).toContain("不同工具版本能力不同，成绩不直接比较");
       app.handleInput("m"); await vi.waitFor(() => { const value = screen(); expect(value.kind === "report" && value.mode).toBe("without_tool"); });
       await command("review"); await expectScreen("review");
       expect(render()).toContain("o-open");

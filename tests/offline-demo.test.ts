@@ -7,6 +7,7 @@ import { importDataset } from "../src/dataset/import.js";
 import { ExamApp } from "../src/tui/app.js";
 import { ExamTui } from "../src/tui/controller.js";
 import { prepareMascotImage } from "../src/tui/mascot.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 
 it("能在超过 260 字符的绝对路径中验证随题原图", async () => {
   mkdirSync(".work", { recursive: true });
@@ -32,7 +33,7 @@ it("从随附题包导入、查看原图、双模式作答、人工复核并从�
   const runsRoot = join(root, "runs");
   const tui = new ExamTui({
     datasetsRoot, runsRoot, workRoot: join(root, "trials"), importRoot: join(root, "drafts"),
-    modelsConfigPath: join(root, "absent-models.json"), toolsVersion: "v1", pythonInterpreter: "unused",
+    modelsConfigPath: join(root, "absent-models.json"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "unused",
     offlineDemo: { sourcePath, registry }, animation: false,
   });
   const app = new ExamApp(tui);
@@ -94,6 +95,8 @@ it("从随附题包导入、查看原图、双模式作答、人工复核并从�
     enter(); await waitForScreen("pickmodel");
     enter(); await waitForScreen("confirm");
     expect(render()).toContain("执行离线演示");
+    expect(render()).toContain("v2-restricted（受限计算、附件与图像工具）");
+    expect(render()).toContain("模型自主选择工具；无任意 Python/TypeScript 执行");
     expect(render()).not.toContain("真实计费");
     enter(); await waitForScreen("run");
     const service = tui.getService();
@@ -101,16 +104,25 @@ it("从随附题包导入、查看原图、双模式作答、人工复核并从�
     expect(status?.state, status?.error).toBe("done");
     expect(status?.runIds).toHaveLength(2);
     const [without, withTool] = status!.runIds as [string, string];
-    for (const runId of [without, withTool]) {
+    for (const [runId, mode] of [[without, "without_tool"], [withTool, "with_tool"]] as const) {
       const report = JSON.parse(readFileSync(join(runsRoot, runId, "report.json"), "utf8"));
       expect(report.offlineDemo).toBe(true);
       expect(report.coverage).toMatchObject({ "exec:completed": 6, "grade:pending_human_review": 1 });
       expect(report.totals).toEqual({ confirmedRaw: 5, confirmedMax: 5, plannedMax: 9 });
-      expect(readFileSync(join(runsRoot, runId, "report.md"), "utf8")).toContain("脚本作答与模拟用量");
+      expect(report.toolVersions).toEqual([mode === "with_tool" ? EXAM_TOOLS_VERSION : "v1"]);
+      const markdown = readFileSync(join(runsRoot, runId, "report.md"), "utf8");
+      expect(markdown).toContain("脚本作答与模拟用量");
+      if (mode === "with_tool") {
+        expect(markdown).toContain("v2-restricted（受限计算、附件与图像工具）");
+        expect(markdown).toContain("不同工具版本能力不同，成绩不直接比较");
+      } else {
+        expect(markdown).toContain("v1（无工具）");
+        expect(markdown).not.toContain("任意代码");
+      }
     }
     const withToolDetail = await service.getValidatedTaskDetail(runsRoot, withTool, join(datasetsRoot, "demo"), "demo", "with_tool");
     expect(withToolDetail.questions.find((q) => q.questionId === "demo-physics")).toMatchObject({
-      finalAnswerSheet: expect.stringContaining("TypeScript 工具计算"),
+      finalAnswerSheet: expect.stringContaining("计算工具计算"),
       metrics: { toolCalls: 1, toolErrors: 0 },
     });
 
@@ -118,6 +130,9 @@ it("从随附题包导入、查看原图、双模式作答、人工复核并从�
     expect(render()).toContain("演示成绩");
     const result = screen();
     if (result.kind !== "report") throw new Error("未打开报告。");
+    expect(result.mode).toBe("with_tool");
+    expect(render()).toContain("v2-restricted（受限计算、附件与图像工具）");
+    expect(render()).toContain("不同工具版本能力不同，成绩不直接比较");
     key("m");
     await vi.waitFor(() => expect(screen()).toMatchObject({ kind: "report", mode: result.mode === "with_tool" ? "without_tool" : "with_tool" }));
     await command("review", "review");

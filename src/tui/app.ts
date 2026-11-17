@@ -33,6 +33,7 @@ import { CollectionView } from "./collection-view.js";
 import { ChatView } from "./chat-view.js";
 import { MASCOT_ACCENTS, mascotStatus, runtimeStatusLine } from "./mascot-status.js";
 import { OFFLINE_DEMO_LABEL } from "../shared/offline-demo.js";
+import { describeToolVersion, TOOL_VERSION_COMPARABILITY } from "../shared/tool-version.js";
 
 // ── ANSI styling (terminals render these; visibleWidth keeps padding correct) ──
 const S = {
@@ -425,7 +426,7 @@ export class ExamApp implements Component {
     if (s.kind === "detail") return "↑↓ 浏览题目 · Enter 报告 · k 校准 · x 异常处理 · v 续跑 · Esc 历史";
     if (s.kind === "exceptions") return "n/p 换题 · ↑↓ 阅读 · c 决定人 · e 原因 · u 核对用量 · Enter 补答确认 · Esc 返回";
     if (s.kind === "usage") return s.confirming ? "y 保存用量核对 · Esc 返回 · ↑↓ 阅读" : "s Token数 · c 确认人 · e 依据 · Enter 检查摘要 · Esc 返回";
-    if (s.kind === "review") return s.confirming ? "y 保存评分 · esc 取消确认 · ↑↓ 浏览摘要 · q 退出" : s.calibrationParent ? "校准人工核对 · 1题面 2答卷 3依据 · i图片 · s分数 c确认人 e理由 · Enter确认 · Esc返回校准" : "1题面 2答卷 3依据 · i图片 · j初评 · ↑↓滚动 · n/p换题 · s分数 c确认人 e理由 · Enter确认";
+    if (s.kind === "review") return s.confirming ? "y 保存评分 · esc 取消确认 · ↑↓ 浏览摘要 · q 退出" : s.calibrationParent ? "校准人工核对 · 1题面 2答卷 3依据 · i图片 · s分数 c确认人 e理由 · Enter确认 · Esc返回校准" : "1题面 2答卷 3依据 · i图片 · j初评 · d决策辅助 o切换决策模型 x取消 · ↑↓滚动 · n/p换题 · s分数 c确认人 e理由 · Enter确认";
     return "q 退出 · ↑↓/滚轮 选择 · enter/点击 确认 · esc 返回";
   }
 
@@ -672,6 +673,10 @@ export class ExamApp implements Component {
         lines.push(paint(screen.recoveryDecision ? " 明确重新作答一次（原记录保留）" : screen.resume ? " 确认历史续跑（保留原计划和配置）" : " 确认任务", S.bold, S.yellow));
         lines.push(`   提供商/模型：${paint(`${s.profileId} / ${s.modelId}`, S.cyan, S.bold)}`);
         lines.push(`   模式：${paint(s.mode === "both" ? "without_tool + with_tool（独立作答、分别计分）" : s.mode, S.cyan, S.bold)}   ${paint(screen.resume ? "" : "[m 切换]", S.gray)}`);
+        if (s.mode === "with_tool" || s.mode === "both") {
+          lines.push(`   with_tool 工具：${paint(describeToolVersion("with_tool", this.tui.toolsVersion), S.cyan)}`);
+          lines.push(paint("   模型自主选择工具；无任意 Python/TypeScript 执行。", S.gray));
+        }
         lines.push(`   请求推理强度：${paint(s.thinkingLevel ?? "off", S.cyan)} ${paint(screen.resume ? "（原设置）" : "[t 切换 Pi 支持的等级]", S.gray)}`);
         lines.push(paint("   兼容端点支持情况以实际发送参数与服务端证据为准。", S.gray));
         lines.push(`   同时答题数：${paint(String(s.concurrency), S.bold)}   ${paint(screen.resume ? "（原设置）" : "[+/-]", S.gray)}`);
@@ -823,6 +828,10 @@ export class ExamApp implements Component {
         const t = r.totals;
         lines.push(paint(` ${r.offlineDemo ? "演示成绩" : "成绩"} ${screen.mode}`, S.bold, S.yellow) + paint(`  · run=${screen.runId}`, S.gray));
         lines.push(`   确认得分：${paint(`${t.confirmedRaw} / ${t.confirmedMax}`, S.green, S.bold)}   (计划满分 ${paint(String(t.plannedMax), S.cyan)})`);
+        if (r.toolVersions?.length) {
+          lines.push(`   工具版本：${r.toolVersions.map((v) => describeToolVersion(screen.mode, v)).join("；")}`);
+          if (screen.mode === "with_tool") lines.push(paint(`   ${TOOL_VERSION_COMPARABILITY}`, S.gray));
+        }
         lines.push(...coverageLines(r.coverage).flatMap((line) => wrapTextWithAnsi("   " + line, this.width)).map((line) => paint(line, S.gray)));
         if (r.metrics) {
           lines.push(paint(` 指标覆盖 ${r.metrics.recordedTrials}/${r.metrics.totalTrials} 题（包含复用答卷历史消耗）`, S.gray));
@@ -841,6 +850,32 @@ export class ExamApp implements Component {
         lines.push(paint(` ${screen.calibrationParent ? "校准人工核对" : "人工复核"} ${screen.mode} · ${items.length} 待复核`, S.bold, S.yellow));
         if (message) lines.push(truncateToWidth(paint("   " + message, S.yellow), this.width));
         if (items.length === 0) lines.push(paint("   (无待复核：已全部确认或仍由规则/模型处理)", S.green));
+        // 第二阶段：决策辅助面板（仅辅助，需人工确认；绝不修改评分）。
+        if (!screen.calibrationParent) {
+          const profiles = this.tui.decisionProfiles();
+          const decision = this.tui.getDecisionState();
+          const profile = profiles[Math.min(decision?.profileIndex ?? 0, Math.max(0, profiles.length - 1))];
+          lines.push(truncateToWidth(paint(`   决策辅助 · ${profile ? `${profile.displayName} (${profile.model})` : "无可用决策模型"}${decision?.running ? " · 运行中… (x 取消)" : ""}`, S.cyan), this.width));
+          if (decision?.record) {
+            const r = decision.record;
+            const statusText = r.status === "completed" ? "completed" : r.status === "outcome_unknown" ? "结果未知" : "failed";
+            lines.push(truncateToWidth(paint(`   仅辅助，需人工确认 · 状态 ${statusText} · 请求模型 ${r.requestedModel} · 实际模型 ${r.actualModel ?? "未知"} · 延迟 ${r.latencyMs ?? "?"}ms`, S.gray), this.width));
+            lines.push(truncateToWidth(`   choice ${r.choice ?? "—"} · noul ${r.noul ?? "—"} · confidence ${r.confidence ?? "—"}${r.probabilities ? ` · 概率 ${Object.entries(r.probabilities).map(([k, v]) => `${k}=${v.toFixed(2)}`).join(" ")}` : ""}`, this.width));
+            if (r.selectedOptions.length) lines.push(truncateToWidth(paint(`   选中选项：${r.selectedOptions.join("、")}（多选逐项展示，需对照原文证据）`, S.yellow), this.width));
+            for (const ev of r.evidence) {
+              lines.push(truncateToWidth(`   证据 [${ev.start},${ev.end}) ${ev.encoding}${ev.providerPath ? ` path=${ev.providerPath}` : ""} · conf ${ev.confidence}：${ev.quote}`, this.width));
+            }
+            for (const un of r.unlocalizedEvidence) {
+              lines.push(truncateToWidth(paint(`   定位失败（保留人工核对）${un.reason}：${un.quote}`, S.red), this.width));
+            }
+            if (r.usage) lines.push(truncateToWidth(`   用量 in ${r.usage.inputTokens} / out ${r.usage.outputTokens} / total ${r.usage.totalTokens} · provider ms model ${r.providerModelMs ?? "?"} total ${r.providerTotalMs ?? "?"} · requestId ${r.requestId ?? "无"}`, this.width));
+            if (r.warnings.length) lines.push(truncateToWidth(paint(`   warnings：${r.warnings.join("；")}`, S.yellow), this.width));
+            if (r.error) lines.push(truncateToWidth(paint(`   错误 ${r.error.code}（${r.error.outcomeUnknown ? "结果未知，可能已计费" : "确定结果"}）：${r.error.message}`, S.red), this.width));
+            if (r.limitations.length) lines.push(truncateToWidth(paint(`   limitations：${r.limitations.join("；")}`, S.gray), this.width));
+          } else if (decision?.issue) {
+            lines.push(truncateToWidth(paint(`   决策辅助未保存：${decision.issue}`, S.red), this.width));
+          }
+        }
         const cur = items[screen.index];
         if (cur) {
           lines.push(truncateToWidth(`   ${screen.index + 1}/${items.length} ${cur.questionId} · ${cur.reviewStatus}${cur.truncated ? " · 答卷截断，请核对" : ""}`, this.width));
@@ -904,6 +939,19 @@ export class ExamApp implements Component {
     const check = this.tui.getImporter().check(d.draftId);
     lines.push(paint(" 导入预览", S.bold, S.yellow) + paint(`  ${d.datasetId} · ${d.format} · ${d.questions.length} 题`, S.gray));
     lines.push(`   来源：${truncateToWidth(d.source, Math.max(10, this.width - 12))}`);
+    if (d.format === "ocr" && d.ocr) {
+      const o = d.ocr;
+      const statusText = o.status === "completed" ? paint("completed", S.green)
+        : o.status === "partial" ? paint("partial（部分页截断/为空）", S.yellow)
+        : o.status === "outcome_unknown" ? paint("outcome_unknown（结果未知，服务端可能已计费）", S.red)
+        : paint(o.status, S.red);
+      lines.push(`   OCR：${statusText}${o.pageCount !== undefined ? ` · ${o.pageCount} 页` : ""}${o.usage ? ` · usage ${o.usage.totalTokens}` : ""}`);
+      if (o.error) lines.push(truncateToWidth(`   ${o.error.message}`, this.width));
+      if (o.status === "completed" && o.pages?.some((p) => p.finishReason === "length")) {
+        lines.push(paint("   存在截断页（finish_reason=length）：对应题目已标记，请逐题对照原件核对后再入库。", S.yellow));
+      }
+      lines.push(paint("   PDF/图片 OCR：题面以识别文本为草稿，请对照保存原件核对；PDF 页面位图未提取时对照原PDF。", S.gray));
+    }
     this.windowedList(lines, d.questions.length, this.scrollTop, Math.max(3, rows - 15), (i, selected) => {
       const q = d.questions[i]!;
       const scored = q.scoring ? paint("有评分", S.green) : paint("未评分", S.yellow);
@@ -924,6 +972,10 @@ export class ExamApp implements Component {
     const r = screen.review;
     const q = r.draft.questions[r.index]!;
     lines.push(paint(terminalText(` ${q.id} · ${r.index + 1}/${r.draft.questions.length} · ${q.subject} · ${q.answerKind}`), S.bold, S.yellow));
+    if (r.draft.format === "ocr") {
+      const pages = q.pages?.length ? `第 ${(q.pages ?? []).map((p) => p + 1).join("、")} 页` : "页码未知";
+      lines.push(paint(` OCR 定位：${pages} · 坐标证据 ${q.boxes?.length ?? 0} 处${q.ocrCheckedAt ? " · 已人工核对" : " · 未核对"}（原文见「对照/完整原文」页）`, S.cyan));
+    }
     if (this.draftEditor) {
       const label = this.draftEditor.field === "stem" ? "题干（Markdown 原文）" : this.draftEditor.field === "metadata" ? "公开元数据（JSON，不含评分）" : "私有评分依据（JSON；null 表示未提供）";
       lines.push(paint(` 编辑 ${label} · 未保存内容不会进入题库`, S.cyan));
@@ -1076,6 +1128,11 @@ export class ExamApp implements Component {
       return;
     }
     if (this.pending || this.quitting) return;
+    // OCR 识别等待期间可按 c 取消；取消后服务端可能继续计费，结果未知。
+    if (this.keyChar(data) === "c" && this.tui.hasPendingImportOcr()) {
+      this.tui.cancelImportOcr();
+      return;
+    }
     if (this.commands.active) {
       this.commands.handleInput(data);
       return;
@@ -1115,6 +1172,9 @@ export class ExamApp implements Component {
       const ch = this.keyChar(data);
       if (screen.calibrationParent && ch === "m") { this.tui.setMessage("人工校准核对期间不能切换作答模式，请先返回校准列表。"); return; }
       if (ch === "j") { this.perform(() => this.tui.prepareJudge()); this.scrollTop = 0; return; }
+      if (ch === "d") { this.perform(() => this.tui.startDecisionAssist()); return; }
+      if (ch === "o") { this.perform(() => this.tui.cycleDecisionProfile()); return; }
+      if (ch === "x" && this.tui.hasPendingDecisionAssist()) { this.tui.cancelDecisionAssist(); return; }
       if (ch === "i") { this.perform(() => this.tui.openReviewImage()); return; }
       if (["1", "2", "3"].includes(ch)) {
         this.reviewTab = ch === "1" ? "question" : ch === "2" ? "answer" : "scoring";

@@ -6,6 +6,7 @@ import { ModelProfileSchema } from "../src/shared/contracts.js";
 import { ImportService } from "../src/import/import-service.js";
 import { importDataset } from "../src/dataset/import.js";
 import { runBatch } from "../src/runner/batch.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 import { TaskControlService } from "../src/service/task-service.js";
 import { ReviewService } from "../src/service/review-service.js";
 import type { Registry } from "../src/providers/pi-adapter.js";
@@ -73,7 +74,7 @@ describe("Next_Plan §5/§7 offline acceptance: import -> two modes -> resume ->
 
   it("both modes run from the imported set; resume adds NO model requests; report keeps pending/ungraded visible", async () => {
     const { datasetDir, runsRoot, workRoot } = await setupMixed();
-    const base = { datasetId: "mixed", datasetDir, modes: ["without_tool", "with_tool"] as Array<"without_tool" | "with_tool">, profileId: "faux", modelId: "faux-1", limit: 10, runsRoot, workRoot, toolsVersion: "v1", pythonInterpreter: "python", modelsConfigPath: "(unused)", concurrency: 1 };
+    const base = { datasetId: "mixed", datasetDir, modes: ["without_tool", "with_tool"] as Array<"without_tool" | "with_tool">, profileId: "faux", modelId: "faux-1", limit: 10, runsRoot, workRoot, toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", modelsConfigPath: "(unused)", concurrency: 1 };
 
     const r1registry = makeRegistry();
     const r1 = await runBatch({ ...base, registryOverride: r1registry.registry });

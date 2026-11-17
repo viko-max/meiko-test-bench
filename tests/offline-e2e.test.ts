@@ -15,14 +15,14 @@ const question = PublicQuestionSchema.parse({
   assets: [],
 });
 
-const echoPython: AgentTool = {
-  name: "execute_python",
-  label: "Execute Python",
-  description: "Run Python code and return stdout.",
-  parameters: Type.Object({ code: Type.String() }),
+const echoCalculate: AgentTool = {
+  name: "calculate",
+  label: "Calculate",
+  description: "Evaluate a mathematical expression.",
+  parameters: Type.Object({ expression: Type.String() }),
   execute: async (_id, args) => {
-    const code = (args as { code: string }).code;
-    return { content: [{ type: "text", text: `executed:${code}` }], details: {} };
+    const expression = (args as { expression: string }).expression;
+    return { content: [{ type: "text", text: `calculated:${expression}` }], details: {} };
   },
 };
 
@@ -53,10 +53,10 @@ describe("offline end-to-end (faux provider, no network)", () => {
   it("with_tool: model calls a tool, gets the result, then submits (two provider calls)", async () => {
     const setup = setupFaux(
       [
-        fauxAssistantMessage(fauxToolCall("execute_python", { code: "print(2*3)" })),
+        fauxAssistantMessage(fauxToolCall("calculate", { expression: "2*3" })),
         fauxAssistantMessage("Using the tool, F = 6 N."),
       ],
-      { mode: "with_tool", tools: [echoPython] },
+      { mode: "with_tool", tools: [echoCalculate] },
     );
     const outcome = await runTrial({ agent: setup.agent, question, guard: setup.guard, recorder: setup.recorder });
 
@@ -67,7 +67,7 @@ describe("offline end-to-end (faux provider, no network)", () => {
       | { result?: { content?: Array<{ text?: string }> } }
       | undefined;
     expect(toolEnd).toBeTruthy();
-    expect(toolEnd?.result?.content?.[0]?.text).toContain("executed:print(2*3)");
+    expect(toolEnd?.result?.content?.[0]?.text).toContain("calculated:2*3");
   });
 
   it("answer isolation: only public content reaches the transcript, no scoring keys", async () => {
@@ -86,11 +86,11 @@ describe("offline end-to-end (faux provider, no network)", () => {
   it("protection limit: maxTurns=1 stops a tool-using run after the first turn (limit_reached)", async () => {
     const setup = setupFaux(
       [
-        fauxAssistantMessage(fauxToolCall("execute_python", { code: "x=1" })),
+        fauxAssistantMessage(fauxToolCall("calculate", { expression: "1" })),
         fauxAssistantMessage("would-be-final"),
         fauxAssistantMessage("extra-should-not-run"),
       ],
-      { mode: "with_tool", tools: [echoPython], limits: { maxTurns: 1 } },
+      { mode: "with_tool", tools: [echoCalculate], limits: { maxTurns: 1 } },
     );
     const outcome = await runTrial({ agent: setup.agent, question, guard: setup.guard, recorder: setup.recorder });
     expect(outcome.executionStatus).toBe("limit_reached");

@@ -6,6 +6,8 @@
  */
 import { createInterface } from "node:readline";
 import { ExamTui, type Setup } from "./controller.js";
+import { EXAM_TOOLS_VERSION } from "../tools/index.js";
+import { describeToolVersion } from "../shared/tool-version.js";
 import type { TaskEvent } from "../runner/task-events.js";
 
 function ask(rl: ReturnType<typeof createInterface>, q: string): Promise<string> {
@@ -40,7 +42,7 @@ async function main(): Promise<void> {
     modelsConfigPath: "configs/models.json",
     runsRoot: "runs",
     workRoot: ".work",
-    toolsVersion: "v1",
+    toolsVersion: EXAM_TOOLS_VERSION,
     pythonInterpreter: "pyenv/.venv/Scripts/python.exe",
     limitsPath: "configs/limits.json",
     authorisePaid,
@@ -81,6 +83,9 @@ async function main(): Promise<void> {
     ...(apiAns ? { apiConcurrency: Math.max(1, Number(apiAns)) } : {}),
   };
   tui.setSetup(setup);
+  if (setup.mode !== "without_tool") {
+    console.log(`with_tool 工具：${describeToolVersion("with_tool", EXAM_TOOLS_VERSION)}；模型自主选择工具；无任意 Python/TypeScript 执行`);
+  }
 
   const go = (await ask(rl, `确认开始 ${chosen.id} / ${setup.mode} / ${setup.profileId}/${setup.modelId}？(y/n): `)).trim();
   if (go.toLowerCase() !== "y") {

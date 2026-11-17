@@ -6,6 +6,8 @@ import { Type, getSupportedThinkingLevels, type Message } from "@earendil-works/
 import { z } from "zod";
 import { AnySearchClient, ANYSEARCH_COMMIT, ANYSEARCH_VERSION, SearchQuerySchema, type SearchQuery, type SearchDomains } from "../providers/anysearch.js";
 import { ANYSEARCH_SKILL } from "../providers/anysearch-skill.js";
+import { DeepSeekSearchClient, DeepSeekSearchQuerySchema, DEEPSEEK_SEARCH_BILLABLE_UNIT_YUAN } from "../providers/deepseek-search.js";
+import { DEEPSEEK_SKILL, DEEPSEEK_SKILL_COMMIT, DEEPSEEK_SKILL_VERSION } from "../providers/deepseek-search-skill.js";
 import { makeExamStreamFn } from "../providers/stream-fn.js";
 import { capOutputPayload } from "../providers/output-cap.js";
 import { resolveModel, type Registry } from "../providers/pi-adapter.js";
@@ -32,13 +34,19 @@ const fingerprint = (question: CollectionCandidateInput["question"]) => sha256Of
 const queryArgs = Type.Object({ query: Type.String(), tag: Type.Optional(Type.String()), params: Type.Optional(Type.Record(Type.String(), Type.String())),
   zone: Type.Optional(Type.Union([Type.Literal("cn"), Type.Literal("intl")])), language: Type.Optional(Type.String()), max_results: Type.Optional(Type.Integer({ minimum: 1, maximum: 10 })) });
 type Active = { controller: AbortController; agent?: Agent; activity?: string; text?: string };
+/** 搜题搜索客户端：AnySearch（领域发现 + 批量）或 DeepSeek Search/Fetch。 */
+export type CollectionSearchClient = AnySearchClient | DeepSeekSearchClient;
+const defaultClientFactory = (config: CollectionConfig): CollectionSearchClient =>
+  config.searchProvider === "deepseek"
+    ? new DeepSeekSearchClient({ apiKeyEnv: config.apiKeyEnv ?? "DEEPSEEK_API_KEY", timeoutMs: config.limits.requestTimeoutMs })
+    : new AnySearchClient({ apiKeyEnv: config.apiKeyEnv, timeoutMs: config.limits.requestTimeoutMs });
 
 export class CollectionService {
   private readonly active = new Map<string, Active>();
   private readonly unsaved = new Map<string, CollectionSession>();
   private readonly listeners = new Set<() => void>();
   constructor(private readonly importRoot: string, private readonly datasetsRoot: string,
-    private readonly clientFactory: (config: CollectionConfig) => AnySearchClient = (config) => new AnySearchClient({ apiKeyEnv: config.apiKeyEnv, timeoutMs: config.limits.requestTimeoutMs }),
+    private readonly clientFactory: (config: CollectionConfig) => CollectionSearchClient = defaultClientFactory,
     private readonly modelApiKey?: () => string | undefined) {}
 
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -88,8 +96,13 @@ export class CollectionService {
     if (!model || !profile || profile.capability.text === "unsupported" || profile.capability.toolCalling === "unsupported") throw new Error("搜题模型不存在或不支持必要的文本与工具调用。");
     if (!getSupportedThinkingLevels(model).includes(config.thinkingLevel)) throw new Error("搜题模型不支持所选推理等级。");
     assertNoCredentials(profile, "collection model profile");
-    return { model, identity: sha256OfJsonable({ profile, skill: ANYSEARCH_COMMIT, workflow: COLLECTION_WORKFLOW_VERSION,
-      prompt: sha256OfText(ANYSEARCH_SKILL), candidateSchema: collectionCandidateArgs,
+    const deepseek = config.searchProvider === "deepseek";
+    const skillCommit = deepseek ? DEEPSEEK_SKILL_COMMIT : ANYSEARCH_COMMIT;
+    const skillPrompt = deepseek ? DEEPSEEK_SKILL : ANYSEARCH_SKILL;
+    // modelIdentity 绑定搜索 provider、实际 skill 与搜索配置；整理模型仍独立选择。
+    return { model, identity: sha256OfJsonable({ profile, skill: skillCommit, workflow: COLLECTION_WORKFLOW_VERSION,
+      prompt: sha256OfText(skillPrompt), candidateSchema: collectionCandidateArgs,
+      search: { provider: config.searchProvider, apiKeyEnv: config.apiKeyEnv ?? null },
       model: { id: model.id, provider: model.provider, api: model.api, baseUrl: model.baseUrl, input: model.input,
         contextWindow: model.contextWindow, maxTokens: model.maxTokens, reasoning: model.reasoning,
         thinkingLevelMap: model.thinkingLevelMap, samplingParams: model.samplingParams,
@@ -98,10 +111,16 @@ export class CollectionService {
   create(goal: string, config: z.input<typeof CollectionConfigSchema>, registry: Registry): CollectionSession {
     const checked = CollectionConfigSchema.parse(config);
     z.string().trim().min(1).max(20000).parse(goal);
+    if (checked.searchProvider === "deepseek" && !checked.apiKeyEnv) throw new Error("DeepSeek 搜题必须配置搜索 Key 环境变量名，禁止匿名。");
     const resolved = this.model(checked, registry);
+    const deepseek = checked.searchProvider === "deepseek";
     const session: CollectionSession = { schema: "meiko-collection/1", id: `collection-${randomUUID()}`, config: checked,
-      goal, modelIdentity: resolved.identity, skillVersion: ANYSEARCH_VERSION, skillCommit: ANYSEARCH_COMMIT, workflowVersion: COLLECTION_WORKFLOW_VERSION,
-      createdAt: now(), state: "ready", counts: { model: 0, search: 0, extract: 0, capabilities: 0, tools: 0 },
+      goal, modelIdentity: resolved.identity, skillVersion: deepseek ? DEEPSEEK_SKILL_VERSION : ANYSEARCH_VERSION, skillCommit: deepseek ? DEEPSEEK_SKILL_COMMIT : ANYSEARCH_COMMIT, workflowVersion: COLLECTION_WORKFLOW_VERSION,
+      createdAt: now(), state: "ready", counts: { model: 0, search: 0, extract: 0, capabilities: 0, tools: 0, fetch: 0 },
+      ...(deepseek ? { deepseekUsage: {
+        search: { attempts: 0, successfulWithResults: 0, billableRequests: 0, estimatedYuan: 0, priceBasis: "official_list_price_estimate" as const },
+        fetch: { attempts: 0, successfulWithResults: 0, billableRequests: 0, estimatedYuan: 0, priceBasis: "official_list_price_estimate" as const },
+      } } : {}),
       sources: [], candidates: [], operations: [], transcript: [] };
     this.save(session);
     return structuredClone(session);
@@ -123,7 +142,9 @@ export class CollectionService {
     if (session.workflowVersion !== COLLECTION_WORKFLOW_VERSION) throw new Error("旧版搜题会话可查看和生成草稿；请新建会话使用当前搜题流程。");
     if (!["ready", "stopped"].includes(session.state)) throw new Error("该会话已暂停、失败或结果未知；请阅读记录，不能自动续发。");
     const resolved = this.model(session.config, registry);
-    if (resolved.identity !== session.modelIdentity || session.skillCommit !== ANYSEARCH_COMMIT) throw new Error("搜题模型或 skill 配置已变化，请新建会话。");
+    const deepseek = session.config.searchProvider === "deepseek";
+    const expectedCommit = deepseek ? DEEPSEEK_SKILL_COMMIT : ANYSEARCH_COMMIT;
+    if (resolved.identity !== session.modelIdentity || session.skillCommit !== expectedCommit) throw new Error("搜题模型、skill 或搜索配置已变化，请新建会话。");
     const active: Active = { controller: new AbortController() };
     this.active.set(id, active);
     try {
@@ -158,7 +179,7 @@ export class CollectionService {
         metrics.setThinkingLevel(session.config.thinkingLevel);
         const stream = metrics.wrap(budgeted);
         const agent = new Agent({
-          initialState: { systemPrompt: ANYSEARCH_SKILL + `\nUser collection goal: ${session.goal}\nTarget question count: ${session.config.targetCount ?? "not specified; follow the user's request"}\nCurrent collection progress: ${JSON.stringify(collectionProgress(session))}`, tools, model: resolved.model,
+          initialState: { systemPrompt: (deepseek ? DEEPSEEK_SKILL : ANYSEARCH_SKILL) + `\nUser collection goal: ${session.goal}\nTarget question count: ${session.config.targetCount ?? "not specified; follow the user's request"}\nCurrent collection progress: ${JSON.stringify(collectionProgress(session))}`, tools, model: resolved.model,
             thinkingLevel: session.config.thinkingLevel, ...(session.transcript.length ? { messages: structuredClone(session.transcript) as Message[] } : {}) },
           streamFn: (model, context, options) => stream(model, context, { ...options, signal, maxTokens: Math.min(limits.maxOutputTokens, model.maxTokens) }),
           onPayload: (payload) => capOutputPayload(payload, Math.min(limits.maxOutputTokens, resolved.model.maxTokens)),
@@ -227,16 +248,28 @@ export class CollectionService {
     });
   }
 
-  private async operation(session: CollectionSession, kind: "search" | "extract" | "capabilities", args: unknown, execute: () => Promise<unknown>, signal: AbortSignal): Promise<unknown> {
+  private async operation(session: CollectionSession, kind: "search" | "extract" | "capabilities" | "fetch", args: unknown, execute: () => Promise<unknown>, signal: AbortSignal): Promise<unknown> {
     const key = sha256OfJsonable({ kind, args });
     const cached = session.operations.find((operation) => operation.key === key);
     if (cached?.state === "completed") return structuredClone(cached.result);
     if (cached) throw new Error("该搜索操作结果未知，不自动再次发送。");
     if (signal.aborted) throw new Error("搜题已取消。");
-    const max = kind === "search" ? session.config.limits.maxSearchRequests : kind === "extract" ? session.config.limits.maxExtractRequests : session.config.limits.maxCapabilityRequests;
+    const deepseek = session.config.searchProvider === "deepseek" && (kind === "search" || kind === "fetch");
+    if (deepseek) {
+      session.deepseekUsage ??= {
+        search: { attempts: 0, successfulWithResults: 0, billableRequests: 0, estimatedYuan: 0, priceBasis: "official_list_price_estimate" },
+        fetch: { attempts: 0, successfulWithResults: 0, billableRequests: 0, estimatedYuan: 0, priceBasis: "official_list_price_estimate" },
+      };
+      const projected = session.deepseekUsage.search.estimatedYuan + session.deepseekUsage.fetch.estimatedYuan + DEEPSEEK_SEARCH_BILLABLE_UNIT_YUAN;
+      if (projected > session.config.limits.maxSearchSpendYuan) throw new Error(`达到搜索费用估算预算上限（${session.config.limits.maxSearchSpendYuan} 元，官方刊例价估算）；请在核对供应商账单后调整上限。`);
+    }
+    const max = kind === "search" ? session.config.limits.maxSearchRequests : kind === "extract" ? session.config.limits.maxExtractRequests :
+      kind === "fetch" ? session.config.limits.maxFetchRequests : session.config.limits.maxCapabilityRequests;
     if (session.counts[kind] >= max) throw new Error(`达到 ${kind} 请求次数上限。`);
     const record: CollectionSession["operations"][number] = { key, kind, state: "started" };
-    session.counts[kind]++; session.operations.push(record); this.save(session);
+    session.counts[kind]++;
+    if (deepseek) session.deepseekUsage![kind].attempts++;
+    session.operations.push(record); this.save(session);
     try {
       const result = await execute();
       assertNoCredentials(result, "collection search result");
@@ -247,8 +280,32 @@ export class CollectionService {
     }
   }
 
-  private tools(session: CollectionSession, client: AnySearchClient, signal: AbortSignal): AgentTool[] {
+  /**
+   * DeepSeek 用量在 provider 成功返回后立即记账并原子存档（billable 时），先于后续本地处理：
+   * URL 过滤、来源大小、凭据自检或存档失败都不能撤销服务端已发生的计费。
+   * 空 results、空正文与明确错误在调用点以 billable=false 进入，不计费。
+   */
+  private billDeepSeek(session: CollectionSession, kind: "search" | "fetch", billable: boolean): void {
+    const usage = session.deepseekUsage?.[kind];
+    if (!usage) return;
+    if (billable) {
+      usage.successfulWithResults++;
+      usage.billableRequests++;
+      usage.estimatedYuan = Number((usage.estimatedYuan + DEEPSEEK_SEARCH_BILLABLE_UNIT_YUAN).toFixed(6));
+      this.save(session);
+    }
+  }
+
+  private sourceFromPage(session: CollectionSession, page: { url: string; title: string; content: string; truncated: boolean; contentType: string | null }) {
+    if (Buffer.byteLength(page.content) + session.sources.reduce((sum, source) => sum + Buffer.byteLength(source.content), 0) > session.config.limits.maxSourceBytes) throw new Error("搜题来源材料达到大小上限。");
+    const source = { ...page, id: `source-${sha256OfJsonable(page).slice(0, 24)}`, digest: sha256OfText(page.content), fetchedAt: now() };
+    session.sources.push(source); return source;
+  }
+
+  private tools(session: CollectionSession, client: CollectionSearchClient, signal: AbortSignal): AgentTool[] {
     const result = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify({ untrustedExternalData: true, value }) }], details: {} });
+    if (session.config.searchProvider === "deepseek") return this.deepseekTools(session, client as DeepSeekSearchClient, signal, result);
+    const anysearch = client as AnySearchClient;
     const search = async (raw: unknown) => {
       const query = SearchQuerySchema.parse(raw);
       if (query.tag) {
@@ -256,13 +313,13 @@ export class CollectionService {
         const capability = capabilities.flatMap((domain) => domain.sub_domains).find((item) => item.sub_domain === query.tag);
         if (!capability || Object.entries(capability.params).some(([key, info]) => info.required && !Object.hasOwn(query.params ?? {}, key))) throw new Error("垂直搜索需要先发现领域，并提供全部必填参数。");
       }
-      return this.operation(session, "search", query, () => client.search(query, signal), signal);
+      return this.operation(session, "search", query, () => anysearch.search(query, signal), signal);
     };
     return [
       { name: "get_sub_domains", label: "发现搜索领域", description: "Discover compact vertical tags and required params. Supply tag for full parameter details from the same cache.", parameters: Type.Object({ domains: Type.Array(Type.String(), { minItems: 1, maxItems: 5 }), tag: Type.Optional(Type.String()) }),
         execute: async (_id, args) => {
           const { domains, tag } = args as { domains: string[]; tag?: string };
-          const discovered = await this.operation(session, "capabilities", domains, () => client.getSubDomains(domains, signal), signal) as SearchDomains;
+          const discovered = await this.operation(session, "capabilities", domains, () => anysearch.getSubDomains(domains, signal), signal) as SearchDomains;
           return result(collectionDomains(discovered, tag));
         } },
       { name: "search", label: "搜索题目来源", description: "Find source links. Snippets are not verified question evidence.", parameters: queryArgs,
@@ -274,12 +331,7 @@ export class CollectionService {
       { name: "extract", label: "读取来源正文", description: "Extract a public HTTPS textual source; binary documents are unsupported. Returns immutable sourceId and completeness status.", parameters: Type.Object({ url: Type.String() }),
         execute: async (_id, args) => {
           const url = (args as { url: string }).url;
-          const page = await this.operation(session, "extract", url, async () => {
-            const page = await client.extract(url, signal);
-            if (Buffer.byteLength(page.content) + session.sources.reduce((sum, source) => sum + Buffer.byteLength(source.content), 0) > session.config.limits.maxSourceBytes) throw new Error("搜题来源材料达到大小上限。");
-            const source = { ...page, id: `source-${sha256OfJsonable(page).slice(0, 24)}`, digest: sha256OfText(page.content), fetchedAt: now() };
-            session.sources.push(source); return source;
-          }, signal);
+          const page = await this.operation(session, "extract", url, async () => this.sourceFromPage(session, await anysearch.extract(url, signal)), signal);
           return result(page);
         } },
       { name: "source_links", label: "查看来源链接", description: "Inspect links in an already extracted directory/index using its sourceId. Local navigation only; linked pages still require extract before they become question evidence.",
@@ -291,6 +343,47 @@ export class CollectionService {
           return result(collectionSourceLinks(source, limit, contains));
         } },
       { name: "propose_question", label: "提出候选题", description: "Propose an existing question with exact extracted-source evidence using {candidate:{question,sourceId,evidence,...}}. Never publishes or starts answering.", parameters: collectionCandidateArgs,
+        execute: async (_id, args) => result(await this.propose(session, (args as { candidate: CollectionCandidateInput }).candidate)) },
+    ];
+  }
+
+  /** DeepSeek 工具集：search/fetch/source_links/propose_question；无领域发现与批量搜索。 */
+  private deepseekTools(session: CollectionSession, client: DeepSeekSearchClient, signal: AbortSignal,
+    result: (value: unknown) => { content: Array<{ type: "text"; text: string }>; details: Record<string, never> }): AgentTool[] {
+    return [
+      { name: "search", label: "搜索题目来源", description: "DeepSeek search: find candidate source links. Snippets/summaries are untrusted data, never question evidence; each non-empty result set is billed at the official list price (estimate). Use fetch before proposing.", parameters: Type.Object({
+          query: Type.String({ minLength: 1, maxLength: 128 }), count: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+          need_content: Type.Optional(Type.Boolean()) }),
+        execute: async (_id, args) => {
+          const query = DeepSeekSearchQuerySchema.parse(args);
+          return result(await this.operation(session, "search", query, async () => {
+            const detailed = await client.searchDetailed(query, { signal });
+            // 计费以 provider 原始 results 为准：本地 URL 过滤为空不撤销已发生用量。
+            this.billDeepSeek(session, "search", detailed.providerResultCount > 0);
+            return detailed.results;
+          }, signal));
+        } },
+      { name: "fetch", label: "抓取来源正文", description: "DeepSeek fetch: read a public HTTPS page (200 with non-empty content, billed at the official list price estimate). Returns immutable sourceId and completeness status; truncated or empty pages cannot back candidates.",
+        parameters: Type.Object({ url: Type.String() }),
+        execute: async (_id, args) => {
+          const url = (args as { url: string }).url;
+          const page = await this.operation(session, "fetch", url, async () => {
+            const fetched = await client.fetchPage(url, { signal });
+            // fetchPage 成功即 200 且正文非空（空正文在客户端拒绝），计费先于来源大小/存档处理。
+            this.billDeepSeek(session, "fetch", true);
+            return this.sourceFromPage(session, fetched);
+          }, signal);
+          return result(page);
+        } },
+      { name: "source_links", label: "查看来源链接", description: "Inspect links in an already fetched directory/index using its sourceId. Local navigation only; linked pages still require fetch before they become question evidence.",
+        parameters: Type.Object({ sourceId: Type.String(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30 })), contains: Type.Optional(Type.String()) }),
+        execute: async (_id, args) => {
+          const { sourceId, limit, contains } = args as { sourceId: string; limit?: number; contains?: string };
+          const source = session.sources.find((item) => item.id === sourceId);
+          if (!source) throw new Error("来源尚未抓取或 sourceId 不存在。");
+          return result(collectionSourceLinks(source, limit, contains));
+        } },
+      { name: "propose_question", label: "提出候选题", description: "Propose an existing question with exact fetched-source evidence using {candidate:{question,sourceId,evidence,...}}. Search snippets are never evidence. Never publishes or starts answering.", parameters: collectionCandidateArgs,
         execute: async (_id, args) => result(await this.propose(session, (args as { candidate: CollectionCandidateInput }).candidate)) },
     ];
   }

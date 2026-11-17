@@ -6,6 +6,12 @@
 import type { AnswerMode } from "../shared/contracts.js";
 
 export const PROMPT_VERSION = "v2";
+/** Prompt framing version for with_tool runs (adds the attachment listing). */
+export const WITH_TOOL_PROMPT_VERSION = "v3";
+
+export function promptVersionForMode(mode: AnswerMode): string {
+  return mode === "with_tool" ? WITH_TOOL_PROMPT_VERSION : PROMPT_VERSION;
+}
 
 const COMMON = `You are taking an exam. Answer the question on your own.
 

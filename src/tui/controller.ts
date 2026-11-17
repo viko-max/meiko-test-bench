@@ -18,9 +18,11 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { importDataset } from "../dataset/import.js";
 import { mediaTypeForRef } from "../dataset/parse.js";
 import { loadModelsConfig } from "../providers/models-config.js";
+import { loadDecisionProfiles } from "../providers/decision-config.js";
 import { createMergedRegistry, listProviderGroups, synthesizeBuiltinProfile, type ProviderGroup } from "../providers/pi-catalog.js";
 import { createRegistry, resolveModel, type Registry } from "../providers/pi-adapter.js";
-import { ImportService, type DraftDataset, type DraftQuestionReview, type DraftEditField } from "../import/import-service.js";
+import { ImportService, type DraftDataset, type DraftQuestionReview, type DraftEditField, type OcrClientFactory } from "../import/import-service.js";
+import { isOcrSourcePath } from "../providers/deepseek-ocr.js";
 import { loadQuestionImage, openQuestionImage, type QuestionImage } from "../service/question-image.js";
 import { TaskControlService, type TaskDetail, type TaskSummary } from "../service/task-service.js";
 import { ReviewService, type ReviewQueueItem } from "../service/review-service.js";
@@ -35,7 +37,10 @@ import { defaultJudgeDraft, JudgeConfigSchema, readJudgeConfig, saveJudgeConfig,
 import { CollectionWorkspace } from "./collection-controller.js";
 import { ChatWorkspace } from "./chat-controller.js";
 import type { CollectionConfig } from "../shared/collection.js";
-import type { AnySearchClient } from "../providers/anysearch.js";
+import type { CollectionClient } from "./collection-controller.js";
+import { DEFAULT_DECISION_PROFILES, type DecisionAssistanceRecord, type DecisionProviderProfile } from "../shared/decision.js";
+import { SystemOneClient } from "../providers/systemone.js";
+import { DecisionReviewService } from "../service/decision-review.js";
 
 export type { ProviderGroup } from "../providers/pi-catalog.js";
 
@@ -43,7 +48,7 @@ const STOP_PENDING = "已请求停止，等待进行中的请求结束并保存�
 
 export interface ExamTuiConfig {
   chatRoot?: string;
-  collectionClient?: (config: CollectionConfig, getApiKey: () => string | undefined) => AnySearchClient;
+  collectionClient?: (config: CollectionConfig, getApiKey: () => string | undefined) => CollectionClient;
   judgeConfigPath?: string;
   datasetsRoot: string;
   modelsConfigPath: string;
@@ -61,6 +66,12 @@ export interface ExamTuiConfig {
   animation?: boolean;
   /** Staging root for import drafts (Next_Plan §3). Default ".import". */
   importRoot?: string;
+  /** OCR client factory (tests inject an offline double); default real DeepSeek client. */
+  ocrClientFactory?: OcrClientFactory;
+  /** 第二阶段 /review 决策 profile（测试注入）；否则读 models.json 同目录 decision.json，缺文件回退默认蚂蚁 + 象信。 */
+  decisionProfiles?: DecisionProviderProfile[];
+  /** 决策 client 工厂（测试注入离线替身）；真实调用必须 authorisePaid。 */
+  decisionClientFactory?: (profile: DecisionProviderProfile) => SystemOneClient;
 }
 
 export interface DatasetInfo {
@@ -160,11 +171,16 @@ export class ExamTui {
   private collectionDraftId?: string;
   /** P2: run dir per mode for the current task (each mode is its own run dir). */
   private runIdsByMode = new Map<AnswerMode, string>();
+  /** OCR import in flight (phase 1): cancelled first by stopAndWait; never retried. */
+  private ocrPending?: { controller: AbortController; done: Promise<void> };
+  /** 第二阶段：复核页决策辅助状态（跨 refresh 保留；仅辅助，需人工确认）。 */
+  private decisionState?: { profileIndex: number; running: boolean; record?: DecisionAssistanceRecord; issue?: string };
+  private decisionPending?: { controller: AbortController; done: Promise<void> };
 
   constructor(private readonly cfg: ExamTuiConfig, service?: TaskControlService) {
     this.service = service ?? new TaskControlService();
     this.judge = new JudgeService(cfg.runsRoot);
-    this.importer = new ImportService(cfg.datasetsRoot, cfg.importRoot ?? ".import");
+    this.importer = new ImportService(cfg.datasetsRoot, cfg.importRoot ?? ".import", cfg.ocrClientFactory);
     this.animation = cfg.animation ?? true;
     // Default to datasets so direct/tested interaction works without begin();
     // runExamTui calls begin() to enter the intro (or home when animation is off).
@@ -176,6 +192,9 @@ export class ExamTui {
   }
 
   get demoSource(): string | undefined { return this.cfg.offlineDemo?.sourcePath; }
+
+  /** 当前入口配置的工具版本（确认页展示 with_tool 能力用）。 */
+  get toolsVersion(): string { return this.cfg.toolsVersion; }
 
   getService(): TaskControlService {
     return this.service;
@@ -321,6 +340,7 @@ export class ExamTui {
 
   /** Import a source file/folder into a staged draft -> preview screen. */
   startImport(sourcePath: string, datasetId?: string, version = "1"): void {
+    if (isOcrSourcePath(sourcePath)) { void this.runImportOcr(sourcePath, datasetId, version); return; }
     try {
       const id = (datasetId ?? deriveDatasetId(sourcePath)).slice(0, 60);
       const draft = this.importer.importSource(sourcePath, { datasetId: id, version });
@@ -328,6 +348,54 @@ export class ExamTui {
     } catch (error) {
       this.state = { ...this.state, message: `导入失败：${(error as Error).message}` };
     }
+  }
+
+  /** OCR import (PDF/图片): asynchronous; wait state shows progress and cancel. */
+  private async runImportOcr(sourcePath: string, datasetId: string | undefined, version: string): Promise<void> {
+    if (this.ocrPending) {
+      this.state = { ...this.state, message: "已有 OCR 识别进行中，请先等待或取消（c）。" };
+      return;
+    }
+    const id = (datasetId ?? deriveDatasetId(sourcePath)).slice(0, 60);
+    const controller = new AbortController();
+    this.state = {
+      ...this.state,
+      message: `OCR 识别中：${sourcePath}（已发送 DeepSeek 页面识别请求；等待时可按 c 取消，停止任务会先取消并等待存档）`,
+    };
+    const task = (async () => {
+      try {
+        const draft = await this.importer.importOcrSource(sourcePath, { datasetId: id, version, signal: controller.signal });
+        const ocr = draft.ocr;
+        if (ocr?.status === "completed") {
+          this.state = { ...this.state, message: undefined, screen: { kind: "importPreview", draft } };
+        } else {
+          // 失败/部分/未知都保留草稿；结果未知时明确提示可能已计费。
+          const detail = ocr?.error ? `：${ocr.error.message}` : "";
+          this.state = {
+            ...this.state,
+            screen: { kind: "importPreview", draft },
+            message: `OCR 识别未成功完成（${ocr?.status ?? "未知"}${detail}）。草稿与原件已保留，没有自动重试；请核对后决定。`,
+          };
+        }
+      } catch (error) {
+        // 上传前的校验失败没有建立草稿。
+        this.state = { ...this.state, message: `OCR 导入失败：${(error as Error).message}` };
+      } finally {
+        if (this.ocrPending?.controller === controller) this.ocrPending = undefined;
+      }
+    })();
+    this.ocrPending = { controller, done: task };
+    await task;
+  }
+
+  hasPendingImportOcr(): boolean { return !!this.ocrPending; }
+
+  /** 取消进行中的 OCR 识别；服务端可能继续处理并计费，草稿会存为结果未知。 */
+  cancelImportOcr(): boolean {
+    if (!this.ocrPending) return false;
+    this.ocrPending.controller.abort();
+    this.state = { ...this.state, message: "已请求取消 OCR 识别，等待存档结果未知草稿…" };
+    return true;
   }
 
   /** Open a staged draft's preview (review -> confirm/discard). */
@@ -610,7 +678,8 @@ export class ExamTui {
   async prepareResume(runId: string): Promise<void> {
     const datasetId = this.datasetId(runId);
     const resume = await this.service.prepareResume(this.cfg.runsRoot, runId, join(this.cfg.datasetsRoot, datasetId), datasetId);
-    if (resume.manifest.toolsVersion !== this.cfg.toolsVersion) throw new Error("当前工具版本与历史任务不一致，不能冒用原版本续跑。");
+    // without_tool 的历史身份恒为 v1，不受当前工具版本影响；仅 with_tool 要求当前版本一致。
+    if (resume.manifest.mode === "with_tool" && resume.manifest.toolsVersion !== this.cfg.toolsVersion) throw new Error("当前工具版本与历史任务不一致，不能冒用原版本续跑。");
     const c = resume.config;
     this.state = { ...this.state, selectedDataset: datasetId, message: undefined, screen: { kind: "confirm", resume,
       setup: { profileId: c.profileId, modelId: resume.manifest.modelId, mode: resume.manifest.mode,
@@ -737,6 +806,18 @@ export class ExamTui {
    *  aborted, archives flushed) before the caller tears down the UI. Without
    *  this, quitting leaves the batch calling the model in the background. */
   async stopAndWait(): Promise<void> {
+    // OCR 识别先取消并等待草稿存档（服务端可能继续计费，结果未知规则由服务层落盘）。
+    const pending = this.ocrPending;
+    if (pending) {
+      pending.controller.abort();
+      await pending.done.catch(() => undefined);
+    }
+    // 决策辅助同样先取消并等待存档（失败/未知记录由服务层保存）。
+    const decision = this.decisionPending;
+    if (decision) {
+      decision.controller.abort();
+      await decision.done.catch(() => undefined);
+    }
     const id = this.state.taskId;
     if (id) this.stop();
     // 所有会话先获得取消信号；某一类存档失败也不能让另一类继续计费。
@@ -988,10 +1069,102 @@ export class ExamTui {
       if (this.state.screen.kind === "review" && this.state.screen.calibrationParent && mode && mode !== this.state.screen.mode) throw new Error("人工校准核对期间不能切换作答模式，请先返回校准列表。");
       const selected = this.service.resolveRunMode(this.cfg.runsRoot, runId, mode);
       const items = await this.reviewService(selected.runId).getQueue(selected.runId, selected.mode);
+      // 换题集/模式时重置决策辅助展示；运行中的调用不受影响（完成后写入新状态）。
+      if (this.state.screen.kind !== "review" || this.state.screen.runId !== selected.runId || this.state.screen.mode !== selected.mode) {
+        this.decisionState = undefined;
+      }
       this.state = { ...this.state, screen: { kind: "review", runId: selected.runId, mode: selected.mode, items, index: 0, score: null, confirmer: "", reason: "", confirming: false }, message: undefined };
     } catch (error) {
       this.state = { ...this.state, message: (error as Error).message };
     }
+  }
+
+  // ── 第二阶段 /review 决策辅助（仅辅助，需人工确认；绝不写 grade/报告） ──
+  decisionProfiles(): DecisionProviderProfile[] {
+    // 优先级：测试/调用方注入 > configs/decision.json（与 models.json 同目录）> 默认蚂蚁+象信。
+    // decision.json 存在但损坏会直接抛错，绝不静默默认。
+    const profiles =
+      this.cfg.decisionProfiles ??
+      loadDecisionProfiles(join(dirname(this.cfg.modelsConfigPath), "decision.json")) ??
+      DEFAULT_DECISION_PROFILES;
+    return profiles.filter((p) => p.enabled);
+  }
+
+  getDecisionState(): { profileIndex: number; running: boolean; record?: DecisionAssistanceRecord; issue?: string } | undefined {
+    return this.decisionState;
+  }
+
+  hasPendingDecisionAssist(): boolean { return !!this.decisionPending; }
+
+  /** 切换决策 profile（运行中不可切换）。 */
+  cycleDecisionProfile(): void {
+    if (this.decisionPending) {
+      this.state = { ...this.state, message: "决策辅助进行中，请先等待或按 x 取消。" };
+      return;
+    }
+    const profiles = this.decisionProfiles();
+    if (!profiles.length) throw new Error("没有启用的决策模型 profile。");
+    const current = this.decisionState?.profileIndex ?? 0;
+    this.decisionState = { profileIndex: (current + 1) % profiles.length, running: false };
+    this.state = { ...this.state, message: undefined };
+  }
+
+  private decisionClientFor(profile: DecisionProviderProfile): SystemOneClient {
+    if (this.cfg.decisionClientFactory) return this.cfg.decisionClientFactory(profile); // 测试替身：离线
+    if (this.cfg.offlineDemo) throw new Error("离线演示不发起真实决策请求。");
+    if (!this.cfg.authorisePaid) throw new Error("REFUSED: 决策辅助是真实付费请求，需要 --authorise-paid；测试可注入 decisionClientFactory 离线运行。");
+    return new SystemOneClient(profile);
+  }
+
+  private decisionReviewService(runId: string): DecisionReviewService {
+    const datasetId = this.datasetId(runId);
+    return new DecisionReviewService(this.cfg.runsRoot, join(this.cfg.datasetsRoot, datasetId), datasetId);
+  }
+
+  /** 发起一次决策辅助复核；每次只发一次请求，无自动重试；失败/未知也会存档。 */
+  async startDecisionAssist(): Promise<void> {
+    const s = this.state.screen;
+    if (s.kind !== "review") return;
+    const item = s.items[s.index];
+    if (!item) return;
+    if (s.calibrationParent) throw new Error("校准人工核对期间不发起决策辅助，请先返回校准列表。");
+    if (this.decisionPending) {
+      this.state = { ...this.state, message: "已有决策辅助进行中，请先等待或按 x 取消。" };
+      return;
+    }
+    const profiles = this.decisionProfiles();
+    if (!profiles.length) throw new Error("没有启用的决策模型 profile。");
+    const profileIndex = Math.min(this.decisionState?.profileIndex ?? 0, profiles.length - 1);
+    const profile = profiles[profileIndex]!;
+    const client = this.decisionClientFor(profile);
+    this.decisionState = { profileIndex, running: true, record: undefined, issue: undefined };
+    this.state = { ...this.state, message: `决策辅助运行中：${profile.displayName}（每次只发一次请求；x 取消，停止任务会先取消并等待存档）` };
+    const controller = new AbortController();
+    const task = (async () => {
+      try {
+        const record = await this.decisionReviewService(s.runId).assist({
+          runId: s.runId, mode: s.mode, trialId: item.trialId, profile, client, signal: controller.signal,
+        });
+        this.decisionState = { profileIndex, running: false, record };
+        const statusText = record.status === "completed" ? "已完成（仅辅助，需人工确认）" : record.status === "outcome_unknown" ? "结果未知（服务端可能已计费，请核对供应商记录）" : "失败";
+        this.state = { ...this.state, message: `决策辅助${statusText}：${profile.displayName} · 实际模型 ${record.actualModel ?? "未知"}；已存档到 trial 目录，未修改评分。` };
+      } catch (error) {
+        this.decisionState = { profileIndex, running: false, issue: (error as Error).message };
+        this.state = { ...this.state, message: `决策辅助未保存：${(error as Error).message}` };
+      } finally {
+        if (this.decisionPending?.controller === controller) this.decisionPending = undefined;
+      }
+    })();
+    this.decisionPending = { controller, done: task };
+    await task;
+  }
+
+  /** 取消进行中的决策辅助；服务层会把结果未知的记录存档。 */
+  cancelDecisionAssist(): boolean {
+    if (!this.decisionPending) return false;
+    this.decisionPending.controller.abort();
+    this.state = { ...this.state, message: "已请求取消决策辅助，等待存档…" };
+    return true;
   }
 
   async openReviewImage(assetIndex?: number): Promise<void> {

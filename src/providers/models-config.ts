@@ -7,7 +7,7 @@ import { ModelsConfigSchema, type ModelsConfig } from "../shared/contracts.js";
 import { assertNoCredentials } from "../shared/creds.js";
 
 /** Recursively drop `$`-prefixed documentation keys (e.g. `$comment`). */
-function stripDocKeys(value: unknown): unknown {
+export function stripDocKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripDocKeys);
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};

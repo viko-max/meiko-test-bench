@@ -32,7 +32,8 @@ import { classifyArchived } from "./resume.js";
 import { mapWithConcurrency } from "./concurrency.js";
 import { RequestScheduler, type SchedulerLimits } from "./request-scheduler.js";
 import { gradeTrial, gradeIsStale } from "../grading/grade.js";
-import { PROMPT_VERSION } from "./prompts.js";
+import { promptVersionForMode } from "./prompts.js";
+import { EXAM_TOOLS_VERSION, WITHOUT_TOOL_TOOLS_VERSION } from "../tools/index.js";
 import { buildModeReport, reportToMarkdown, type ModeReport } from "../reporting/report.js";
 import { renderTrialTranscript } from "../reporting/transcript.js";
 import { buildExamTools, makeToolContext } from "../tools/index.js";
@@ -138,6 +139,13 @@ export async function runBatch(p: BatchParams): Promise<BatchResult> {
 
 async function runBatchLocked(p: BatchParams, executionLease: ExecutionLease): Promise<BatchResult> {
   if (p.fresh && p.runId) throw new Error("--fresh and --run-id cannot be combined; an existing run must not be silently re-answered");
+  // with_tool 身份由当前工具集决定；混入旧工具版本会破坏答卷可比性，在导入题集/
+  // 写 manifest/发任何请求之前拒绝。without_tool 永远使用历史 v1 身份，忽略入口值。
+  if (p.modes.includes("with_tool") && p.toolsVersion !== EXAM_TOOLS_VERSION) {
+    throw new Error(`with_tool requires the current exam tools version (${EXAM_TOOLS_VERSION}); refusing to mix with the configured tools version (${p.toolsVersion}). Start a new run instead of resuming with mismatched tool identity.`);
+  }
+  const modePromptVersion = (mode: AnswerMode): string => promptVersionForMode(mode);
+  const modeToolsVersion = (mode: AnswerMode): string => (mode === "with_tool" ? EXAM_TOOLS_VERSION : WITHOUT_TOOL_TOOLS_VERSION);
   const log = p.onProgress ?? (() => {});
   const emit = (e: TaskEvent): void => p.onEvent?.(e);
   const registry: Registry = p.registryOverride ?? createRegistry(loadModelsConfig(p.modelsConfigPath));
@@ -215,14 +223,16 @@ async function runBatchLocked(p: BatchParams, executionLease: ExecutionLease): P
     const storedVersion = readDatasetVersion(p.datasetDir, p.datasetId);
     if (existsSync(join(p.datasetDir, "VERSION.json")) && p.datasetVersion && p.datasetVersion !== storedVersion) throw new Error("运行版本与已发布题集版本不一致。");
     const datasetVersion = p.datasetVersion ?? storedVersion;
+    const promptVersion = modePromptVersion(mode);
+    const toolsVersion = modeToolsVersion(mode);
     const configDigest = computeConfigDigest({
       datasetId: p.datasetId,
       datasetVersion,
       provider: profile.provider,
       modelId: model.id,
       mode,
-      promptVersion: PROMPT_VERSION,
-      toolsVersion: p.toolsVersion,
+      promptVersion,
+      toolsVersion,
       baseUrl: profile.baseUrl,
       api: profile.api,
       model: { id: model.id, contextWindow: model.contextWindow, maxTokens: model.maxTokens, input: model.input, reasoning: model.reasoning },
@@ -284,8 +294,8 @@ async function runBatchLocked(p: BatchParams, executionLease: ExecutionLease): P
       plannedMaxScore: plannedMax,
       sources: [],
       batchId: runSuffix,
-      promptVersion: PROMPT_VERSION,
-      toolsVersion: p.toolsVersion,
+      promptVersion,
+      toolsVersion,
       resumeConfig: { profileId: p.profileId, thinkingLevel, limits, concurrency: p.concurrency ?? 1,
         ...(batchTokenLimit === undefined ? {} : { batchTokenLimit }),
         pythonInterpreter: p.pythonInterpreter, ...(p.requestSchedulerLimits ? { requestSchedulerLimits: p.requestSchedulerLimits } : {}) },
@@ -389,8 +399,8 @@ async function runBatchLocked(p: BatchParams, executionLease: ExecutionLease): P
         provider: profile.provider,
         modelId: model.id,
         mode,
-        promptVersion: PROMPT_VERSION,
-        toolsVersion: p.toolsVersion,
+        promptVersion,
+        toolsVersion,
         limits,
         ...(thinkingLevel !== "off" ? { thinkingLevel } : {}),
         questionContentDigest: e.contentDigest,
@@ -437,7 +447,7 @@ async function runBatchLocked(p: BatchParams, executionLease: ExecutionLease): P
             tools: [],
             toolsFactory: mode === "with_tool" ? toolsFactory : undefined,
             images,
-            toolsVersion: p.toolsVersion,
+            toolsVersion,
             runsRoot: p.runsRoot,
             workRoot: p.workRoot,
             runIdSuffix: runSuffix,

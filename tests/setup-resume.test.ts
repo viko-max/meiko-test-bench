@@ -10,6 +10,7 @@ import { readManifest, writeManifest } from "../src/runner/answer-source.js";
 import { TaskControlService } from "../src/service/task-service.js";
 import { ExamTui } from "../src/tui/controller.js";
 import { ExamApp } from "../src/tui/app.js";
+import { EXAM_TOOLS_VERSION } from "../src/tools/index.js";
 
 function fixture(reasoning = false, count = 2) {
   mkdirSync(resolve(".work"), { recursive: true });
@@ -24,7 +25,7 @@ function fixture(reasoning = false, count = 2) {
   faux.setResponses(Array.from({ length: 12 }, () => fauxAssistantMessage("B")));
   const models = createModels();
   models.setProvider(faux.provider);
-  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath: "unused", runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: "v1", pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
+  const cfg = { datasetsRoot: join(root, "datasets"), modelsConfigPath: "unused", runsRoot: join(root, "runs"), workRoot: join(root, "work"), toolsVersion: EXAM_TOOLS_VERSION, pythonInterpreter: "python", registryOverride: { models, profilesById: new Map([["faux", profile]]) } };
   const params = { ...cfg, datasetDir, datasetId: "demo", modes: ["without_tool"] as Array<"without_tool" | "with_tool">, profileId: "faux", modelId: "faux-1", limit: count };
   const service = new TaskControlService();
   const tui = new ExamTui(cfg, service);
@@ -114,7 +115,11 @@ describe("双模式、推理设置与指定历史续跑", () => {
     const result = await runBatch(s.params);
     const runId = result.byMode.without_tool!.runId;
     const manifest = readManifest(s.cfg.runsRoot, runId)!;
-    await expect(new ExamTui({ ...s.cfg, toolsVersion: "v2" }, s.service).prepareResume(runId)).rejects.toThrow("工具版本");
+    // without_tool 的历史 v1 身份不因当前工具版本（v2-restricted）被误拒；仅 with_tool 校验工具版本。
+    await new ExamTui({ ...s.cfg, toolsVersion: "v2-old" }, s.service).prepareResume(runId);
+    const withToolLegacy = { ...manifest, mode: "with_tool" as const, promptVersion: "v3", toolsVersion: "v1" };
+    writeManifest(s.cfg.runsRoot, "legacy-withtool", withToolLegacy);
+    await expect(new ExamTui(s.cfg, s.service).prepareResume("legacy-withtool")).rejects.toThrow("工具版本");
     s.cfg.registryOverride.profilesById.set("faux", { ...s.cfg.registryOverride.profilesById.get("faux")!, baseUrl: "https://changed.example/v1" });
     await s.tui.prepareResume(runId);
     expect((await s.service.whenDone(s.tui.start()!))!.state).toBe("error");

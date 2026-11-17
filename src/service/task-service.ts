@@ -24,7 +24,8 @@ import { EXECUTION_POLICY_VERSION } from "../shared/execution-policy.js";
 import { prepareRecovery, recoveryContext } from "../runner/recovery.js";
 import { BatchTokenBudget, readBudget, reconcileBudget } from "../runner/batch-budget.js";
 import { withExecutionLease } from "../runner/execution-lock.js";
-import { PROMPT_VERSION } from "../runner/prompts.js";
+import { promptVersionForMode } from "../runner/prompts.js";
+import { EXAM_TOOLS_VERSION } from "../tools/index.js";
 
 export interface TaskStartParams extends Omit<BatchParams, "signal" | "onEvent" | "onProgress"> {}
 
@@ -51,6 +52,9 @@ export interface TaskQuestionDetail {
   gradeHistory: Grade[];
   contentDigest?: string;
   metrics?: TrialMetrics;
+  /** Trial 原始身份版本，仅作来源展示；不改写历史档案。 */
+  toolsVersion?: string;
+  promptVersion?: string;
 }
 
 export interface TaskDetail {
@@ -117,7 +121,7 @@ export class TaskControlService {
     if (!manifest?.resumeConfig || !manifest.toolsVersion || !manifest.promptVersion) {
       throw new Error("该历史任务缺少可还原的配置快照，不能从界面安全续跑；仍可查看答卷和重算报告。");
     }
-    if (manifest.promptVersion !== PROMPT_VERSION) throw new Error("题面呈现与提示词版本已变化，旧任务不能按新版本续跑；已有答卷仍可查看和复核。");
+    if (manifest.promptVersion !== promptVersionForMode(manifest.mode)) throw new Error("题面呈现与提示词版本已变化，旧任务不能按新版本续跑；已有答卷仍可查看和复核。");
     if (manifest.executionPolicyVersion !== EXECUTION_POLICY_VERSION) throw new Error("执行保护策略已变化，旧任务不能按新策略续跑；答卷和报告仍可查看。");
     const answers = await loadValidAnswers(runsRoot, runId, datasetDir, datasetId, manifest.mode);
     let queued = 0, retained = 0, blocked = 0;
@@ -154,6 +158,10 @@ export class TaskControlService {
   /** Start a batch task in the background. Returns a taskId immediately; resume
    *  dedupes already-completed questions, so a redraw/duplicate never re-answers. */
   start(params: TaskStartParams): string {
+    // 服务层防线：with_tool 只在当前工具版本下启动，拒绝在新旧工具身份之间混用。
+    if (params.modes.includes("with_tool") && params.toolsVersion !== EXAM_TOOLS_VERSION) {
+      throw new Error(`with_tool requires the current exam tools version (${EXAM_TOOLS_VERSION}); refusing to start with mismatched tools version (${params.toolsVersion}).`);
+    }
     const taskId = `task-${Date.now().toString(36)}-${this.seq++}`;
     const controller = new AbortController();
     const rec: TaskRecord = { taskId, controller, state: "running", events: [], subscribers: new Set(), runIds: [], done: Promise.resolve() };
@@ -289,6 +297,8 @@ export class TaskControlService {
         finalAnswerSheet: trial.finalAnswerSheet,
         errorMessage: trial.errorMessage,
         metrics: trial.metrics,
+        toolsVersion: trial.toolsVersion,
+        promptVersion: trial.promptVersion,
         ...(grade ? { grade } : {}),
         gradeHistory: readGradeHistory(join(trialsDir, t, "grade-history.jsonl")),
         ...(trial.questionContentDigest ? { contentDigest: trial.questionContentDigest } : {}),
@@ -331,6 +341,8 @@ export class TaskControlService {
         terminationCause: trial.terminationCause,
         truncated: trial.truncated, finalAnswerSheet: trial.finalAnswerSheet, errorMessage: trial.errorMessage,
         metrics: trial.metrics,
+        toolsVersion: trial.toolsVersion,
+        promptVersion: trial.promptVersion,
         ...(grade ? { grade } : {}),
         gradeHistory: location ? readGradeHistory(join(runsRoot, location.runId, "trials", location.trialId, "grade-history.jsonl")) : [],
         ...(trial.questionContentDigest ? { contentDigest: trial.questionContentDigest } : {}),

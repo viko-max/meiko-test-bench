@@ -12,6 +12,7 @@ __pycache__/
 /.work/
 /.import/
 /configs/models.json
+/configs/decision.json
 /datasets/*
 !/datasets/demo/
 /datasets/demo/source/

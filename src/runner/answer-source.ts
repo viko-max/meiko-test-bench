@@ -105,23 +105,26 @@ export interface ValidAnswers {
   archives: Map<string, ArchivedTrial>;
 }
 
-/** A minimal outcome_unknown trial so a blocked answer still appears in the report. */
-function blockedTrial(questionId: string, reason: string, ds: { datasetId: string; provider: string; modelId: string; configDigest: string; datasetVersion: string }, mode: AnswerMode, questionVersion: string): Trial {
+/** A minimal outcome_unknown trial so a blocked answer still appears in the report.
+ *  身份字段优先沿用被阻止的存档记录（promptVersion/toolsVersion/configDigest 等），
+ *  只有无存档可依据时才退回历史默认值；blocked 状态与不计分语义不变。 */
+function blockedTrial(questionId: string, reason: string, ds: { datasetId: string; provider: string; modelId: string; configDigest: string; datasetVersion: string }, mode: AnswerMode, questionVersion: string, entry?: ArchivedTrial): Trial {
+  const archived = entry?.trial;
   return TrialSchema.parse({
     trialId: `blocked__${questionId}`,
-    datasetId: ds.datasetId,
-    datasetVersion: ds.datasetVersion,
+    datasetId: archived?.datasetId ?? ds.datasetId,
+    datasetVersion: archived?.datasetVersion ?? ds.datasetVersion,
     questionId,
-    questionVersion,
-    provider: ds.provider,
-    modelId: ds.modelId,
+    questionVersion: archived?.questionVersion ?? questionVersion,
+    provider: archived?.provider ?? ds.provider,
+    modelId: archived?.modelId ?? ds.modelId,
     mode,
     executionStatus: "outcome_unknown",
     startedAt: new Date(0).toISOString(),
     endedAt: new Date(0).toISOString(),
-    configDigest: ds.configDigest,
-    promptVersion: "v1",
-    toolsVersion: "v1",
+    configDigest: archived?.configDigest ?? ds.configDigest,
+    promptVersion: archived?.promptVersion ?? "v1",
+    toolsVersion: archived?.toolsVersion ?? "v1",
     finalAnswerSheet: null,
     errorMessage: reason,
   });
@@ -159,7 +162,7 @@ export async function loadValidAnswers(runsRoot: string, runId: string, datasetD
     const questionId = src.questionId;
     blocked.push({ questionId, reason });
     const qv = questions.get(questionId)?.version ?? entry?.trial.questionVersion ?? "1";
-    const trial = TrialSchema.parse({ ...blockedTrial(questionId, reason, ds, mode, qv), trialId: src.trialId });
+    const trial = TrialSchema.parse({ ...blockedTrial(questionId, reason, ds, mode, qv, entry), trialId: src.trialId });
     trials.push(trial);
     archives.set(`${questionId}@${qv}`, { trial, runId: src.runId, hasAttempt: true });
   };

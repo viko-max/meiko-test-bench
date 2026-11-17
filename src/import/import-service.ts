@@ -16,7 +16,7 @@
  * Pure service layer — the TUI/Web drive it (AGENTS.md §3); reusable later.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, statSync, renameSync, realpathSync } from "node:fs";
-import { join, dirname, resolve, basename, relative } from "node:path";
+import { join, dirname, resolve, basename, relative, extname } from "node:path";
 import { randomUUID } from "node:crypto";
 import YAML from "yaml";
 import { z } from "zod";
@@ -25,14 +25,16 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkFrontmatter from "remark-frontmatter";
 import { sha256OfJsonable, sha256OfBytes } from "../shared/hashing.js";
-import { writeJsonAtomic } from "../shared/json.js";
-import { parseOptionsFromBody, parseQuestionMarkdown } from "../dataset/parse.js";
+import { writeJsonAtomic, appendJsonl } from "../shared/json.js";
+import { parseOptionsFromBody, parseQuestionMarkdown, mediaTypeForRef } from "../dataset/parse.js";
 import { checkDraft, scoringComplete, type ConvertCheck } from "./convert-check.js";
 import { publicQuestion, scoringSpec, validateImportId } from "./validation.js";
 import { resolvePublicAttachment, resolveWithin } from "../tools/paths.js";
 import { importDataset } from "../dataset/import.js";
 import { sha256OfText } from "../shared/hashing.js";
 import { buildUserContent } from "../runner/prompt.js";
+import { DeepSeekOcrClient, DeepSeekOcrError, DEEPSEEK_OCR_MAX_FILE_BYTES, DEEPSEEK_OCR_PURPOSE, isOcrSourcePath, type DeepSeekOcrResult } from "../providers/deepseek-ocr.js";
+import { convertOcrPages, parseOcrText, type OcrBox } from "./ocr-convert.js";
 
 export type AnswerKind = "single_choice" | "multi_choice" | "numeric_unit" | "multi_blank" | "expression" | "open" | "out_of_scope";
 const ANSWER_KINDS = new Set<string>(["single_choice", "multi_choice", "numeric_unit", "multi_blank", "expression", "open", "out_of_scope"]);
@@ -54,20 +56,51 @@ export interface DraftQuestion {
   scoring?: DraftScoring;
   sourceFile: string; // provenance: which file this came from
   sourceDigest?: string;
+  /** OCR: source page indexes (0-based) contributing to this question. */
+  pages?: number[];
+  /** OCR: parsed ref/box coordinate evidence (normalised 0..1000). */
+  boxes?: OcrBox[];
+  /** OCR: human reviewed this question's recognised stem (edit save time). */
+  ocrCheckedAt?: string;
 }
+
+// ── OCR draft metadata (strict optional; phase 1 /import) ────────────────────
+export type OcrDraftStatus = "running" | "completed" | "partial" | "failed" | "outcome_unknown";
+export type OcrDraftMeta = {
+  sourcePath: string; // 原始来源路径（记录用）
+  sourceCopy: string; // 保存在草稿目录内的原件副本名
+  sourceSha256: string;
+  purpose: typeof DEEPSEEK_OCR_PURPOSE;
+  status: OcrDraftStatus;
+  requestId?: string;
+  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  pageCount?: number;
+  /** 页级证据：索引、截断状态与解析出的坐标证据；逐页原文在 page-<n>.txt。 */
+  pages?: Array<{ index: number; finishReason: "stop" | "length"; boxes: Array<{ ref: string; box: [number, number, number, number] }> }>;
+  error?: { code: string; message: string; outcomeUnknown: boolean; httpStatus?: number };
+  startedAt: string;
+  completedAt?: string;
+};
+
+/** Injectable OCR client surface (DeepSeekOcrClient or an offline test double). */
+export interface OcrClientLike {
+  recognize(sourcePath: string, opts?: { signal?: AbortSignal }): Promise<DeepSeekOcrResult>;
+}
+export type OcrClientFactory = () => OcrClientLike;
 
 export interface DraftDataset {
   draftId: string;
   datasetId: string;
   version: string;
   status: "draft" | "confirmed" | "discarded";
-  format: "markdown" | "json" | "package";
+  format: "markdown" | "json" | "package" | "ocr";
   source: string;
   questions: DraftQuestion[];
   warnings: string[];
   createdAt: string;
   errors?: string[];
   assetDigests?: Record<string, string>;
+  ocr?: OcrDraftMeta;
 }
 
 const assetKey = (question: DraftQuestion, ref: string) => sha256OfJsonable({ sourceFile: question.sourceFile, ref });
@@ -254,15 +287,33 @@ function scoringToJson(q: DraftQuestion): string | undefined {
 
 const DraftSchema = z.object({
   draftId: z.string(), datasetId: z.string(), version: VersionSchema,
-  status: z.enum(["draft", "confirmed", "discarded"]), format: z.enum(["markdown", "json", "package"]),
+  status: z.enum(["draft", "confirmed", "discarded"]), format: z.enum(["markdown", "json", "package", "ocr"]),
   source: z.string(), createdAt: z.string(), warnings: z.array(z.string()), errors: z.array(z.string()).optional(),
   assetDigests: z.record(z.string().regex(/^[a-f0-9]{64}$/)).optional(),
+  ocr: z.object({
+    sourcePath: z.string(), sourceCopy: z.string(), sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    purpose: z.literal(DEEPSEEK_OCR_PURPOSE),
+    status: z.enum(["running", "completed", "partial", "failed", "outcome_unknown"]),
+    requestId: z.string().optional(),
+    usage: z.object({ inputTokens: z.number().nonnegative(), outputTokens: z.number().nonnegative(), totalTokens: z.number().nonnegative() }).optional(),
+    pageCount: z.number().int().nonnegative().optional(),
+    pages: z.array(z.object({
+      index: z.number().int().nonnegative(),
+      finishReason: z.enum(["stop", "length"]),
+      boxes: z.array(z.object({ ref: z.string(), box: z.tuple([z.number(), z.number(), z.number(), z.number()]) }).strict()),
+    }).strict()).optional(),
+    error: z.object({ code: z.string(), message: z.string(), outcomeUnknown: z.boolean(), httpStatus: z.number().int().optional() }).strict().optional(),
+    startedAt: z.string(), completedAt: z.string().optional(),
+  }).strict().optional(),
   questions: z.array(z.object({
     id: z.string(), version: z.string(), subject: z.string(), answerKind: z.enum(["single_choice", "multi_choice", "numeric_unit", "multi_blank", "expression", "open", "out_of_scope"]),
     stem: z.string(), sourceFile: z.string(), sourceDigest: z.string().optional(), options: z.record(z.string()).optional(), parts: z.array(PublicPartSchema).optional(),
     assets: z.array(z.object({ ref: z.string(), alt: z.string().optional(), role: z.string().optional(), mediaType: z.string().optional() }).strict()).optional(),
     scoring: ScoringSpecSchema.omit({ questionId: true, questionVersion: true, answerKind: true }).partial().optional(),
     language: z.string().optional(), tags: z.array(z.string()).optional(), conversionIssues: z.array(z.string()).optional(),
+    pages: z.array(z.number().int().nonnegative()).optional(),
+    boxes: z.array(z.object({ page: z.number().int().nonnegative(), ref: z.string(), box: z.tuple([z.number(), z.number(), z.number(), z.number()]) }).strict()).optional(),
+    ocrCheckedAt: z.string().optional(),
   }).strict()),
 }).strict();
 
@@ -291,7 +342,11 @@ export interface ConfirmResult {
 }
 
 export class ImportService {
-  constructor(private readonly datasetsRoot: string, private readonly importRoot = ".import") {}
+  constructor(
+    private readonly datasetsRoot: string,
+    private readonly importRoot = ".import",
+    private readonly ocrFactory: OcrClientFactory = () => new DeepSeekOcrClient(),
+  ) {}
 
   private captureAssets(questions: DraftQuestion[], previous: Record<string, string> = {}): Record<string, string> {
     const captured = { ...previous };
@@ -371,6 +426,102 @@ export class ImportService {
     return draft;
   }
 
+  /**
+   * OCR import (phase 1): recognise a PDF/image via the DeepSeek OCR client and
+   * stage a draft with per-page evidence under `.import/<draftId>/`. The source
+   * copy, an `ocr-operation` event log and a placeholder draft are saved BEFORE
+   * any request; every state transition is an atomic save. The client never
+   * retries: on cancellation/timeout/disconnect the draft becomes
+   * outcome_unknown (the server may still be processing and billing); on a
+   * definitive server refusal it becomes failed; partial results stay partial.
+   * A draft that was still "running" when the process died is surfaced as
+   * outcome_unknown on the next get/list — never auto-resubmitted.
+   */
+  async importOcrSource(sourcePath: string, opts: { datasetId: string; version?: string; signal?: AbortSignal }): Promise<DraftDataset> {
+    validateImportId(opts.datasetId);
+    VersionSchema.parse(opts.version ?? "1");
+    sourcePath = resolve(sourcePath);
+    if (!isOcrSourcePath(sourcePath)) throw new Error("OCR 导入仅支持 PDF/PNG/JPEG/WebP/GIF/BMP/TIFF 文件。");
+    // 上传前校验（结果确定，不创建草稿，不算结果未知）。
+    let bytes: Buffer;
+    try { bytes = readFileSync(sourcePath); } catch (error) { throw new Error(`OCR 来源文件不可读：${(error as Error).message}`); }
+    if (bytes.byteLength === 0) throw new Error("OCR 来源文件为空。");
+    if (bytes.byteLength > DEEPSEEK_OCR_MAX_FILE_BYTES) throw new Error("OCR 来源文件超过 100MiB 上限。");
+
+    const draftId = `draft-${randomUUID()}`;
+    const dir = resolveWithin(this.importRoot, draftId);
+    mkdirSync(dir, { recursive: true });
+    const ext = extname(sourcePath).toLowerCase();
+    const copyName = `source-original${ext}`;
+    writeFileSync(resolveWithin(dir, copyName), bytes);
+    const digest = sha256OfBytes(bytes);
+    const startedAt = new Date().toISOString();
+    const events = join(dir, "ocr-operation.jsonl");
+    appendJsonl(events, { event: "started", at: startedAt, source: sourcePath, bytes: bytes.byteLength });
+    const placeholder: DraftDataset = {
+      draftId, datasetId: opts.datasetId, version: opts.version ?? "1", status: "draft", format: "ocr", source: sourcePath,
+      questions: [], warnings: [], createdAt: startedAt,
+      ocr: { sourcePath, sourceCopy: copyName, sourceSha256: digest, purpose: DEEPSEEK_OCR_PURPOSE, status: "running", startedAt },
+    };
+    DraftSchema.parse(placeholder);
+    writeJsonAtomic(join(dir, "draft.json"), placeholder);
+
+    let result: DeepSeekOcrResult;
+    try {
+      result = await this.ocrFactory().recognize(join(dir, copyName), { signal: opts.signal });
+    } catch (error) {
+      const e = error as Partial<DeepSeekOcrError> & Error;
+      const outcomeUnknown = e instanceof DeepSeekOcrError ? e.outcomeUnknown : false;
+      const failed: DraftDataset = {
+        ...placeholder,
+        ocr: {
+          ...placeholder.ocr!, status: outcomeUnknown ? "outcome_unknown" : "failed", completedAt: new Date().toISOString(),
+          error: { code: e.code ?? "unknown", message: e.message ?? "OCR 请求失败", outcomeUnknown, ...(e instanceof DeepSeekOcrError && e.httpStatus !== undefined ? { httpStatus: e.httpStatus } : {}) },
+        },
+      };
+      DraftSchema.parse(failed);
+      writeJsonAtomic(join(dir, "draft.json"), failed);
+      appendJsonl(events, { event: outcomeUnknown ? "outcome_unknown" : "failed", at: failed.ocr!.completedAt, code: failed.ocr!.error!.code, message: failed.ocr!.error!.message });
+      return this.getDraft(draftId)!;
+    }
+
+    // 成功：原始响应与逐页原文都留在草稿目录（独立 OCR 证据）。
+    writeJsonAtomic(join(dir, "ocr-response.json"), result.raw);
+    for (const page of result.pages) writeFileSync(join(dir, `page-${page.index}.txt`), page.text, "utf8");
+    const isPdf = ext === ".pdf";
+    const mediaType = mediaTypeForRef(copyName);
+    const conversion = convertOcrPages(
+      result.pages.map((page) => ({ index: page.index, text: page.text, finishReason: page.finishReason })),
+      {
+        sourceFile: join(dir, copyName), sourceDigest: sha256OfText(bytes.toString("base64")), isPdf,
+        ...(isPdf || !mediaType ? {} : { sharedImage: { ref: copyName, mediaType } }),
+      },
+    );
+    const pageEvidence = result.pages.map((page) => {
+      const parsed = parseOcrText(page.text);
+      return { index: page.index, finishReason: page.finishReason, boxes: parsed.boxes.map((box) => ({ ref: box.ref, box: box.box })) };
+    });
+    const anyTruncated = result.pages.some((page) => page.finishReason === "length");
+    const anyEmpty = result.pages.some((page) => !page.text.trim());
+    const status: OcrDraftStatus = anyTruncated || anyEmpty ? "partial" : "completed";
+    const warnings: string[] = [...conversion.issues];
+    for (const q of conversion.questions) {
+      if (!scoringComplete(q.scoring)) warnings.push(`${q.id}: 缺少完整评分依据（未评分：可收集答卷，不计入正式分）`);
+    }
+    const draft: DraftDataset = {
+      ...placeholder, questions: conversion.questions, warnings, errors: conversion.issues,
+      assetDigests: this.captureAssets(conversion.questions),
+      ocr: {
+        ...placeholder.ocr!, status, completedAt: new Date().toISOString(),
+        requestId: result.requestId ?? undefined, usage: result.usage, pageCount: result.pageCount, pages: pageEvidence,
+      },
+    };
+    DraftSchema.parse(draft);
+    writeJsonAtomic(join(dir, "draft.json"), draft);
+    appendJsonl(events, { event: status, at: draft.ocr!.completedAt, pageCount: result.pageCount, requestId: result.requestId ?? null });
+    return draft;
+  }
+
   private draftPath(draftId: string): string {
     validateImportId(draftId);
     const directory = resolveWithin(this.importRoot, draftId);
@@ -398,16 +549,54 @@ export class ImportService {
     const draft = DraftSchema.parse(JSON.parse(readFileSync(this.draftPath(draftId), "utf8")));
     if (draft.draftId !== draftId) throw new Error("草稿标识与目录不匹配。");
     validateImportId(draft.datasetId);
+    // 进程重启时仍在识别的草稿不能假定为继续运行：上传可能已到达服务端并计费。
+    if (draft.ocr?.status === "running") {
+      return {
+        ...draft,
+        ocr: {
+          ...draft.ocr, status: "outcome_unknown",
+          error: { code: "interrupted", outcomeUnknown: true, message: "进程重启导致 OCR 识别状态未知；上传可能已在服务端继续处理并计费。未自动重发，请核对供应商记录后决定。" },
+        },
+      };
+    }
     return draft;
   }
 
   private currentSource(draft: DraftDataset, index: number): { question: DraftQuestion; text: string } {
     const question = draft.questions[index];
     if (!question) throw new Error("所选题目不存在。");
+    if (draft.format === "ocr") {
+      // OCR 草稿以保存的原件副本为核对基准；二进制绝不当作 utf8 原文展示。
+      const ocr = draft.ocr;
+      if (!ocr) throw new Error("OCR 草稿缺少识别元数据，请重新导入。");
+      const copy = readFileSync(resolvePublicAttachment(dirname(this.draftPath(draft.draftId)), ocr.sourceCopy));
+      if (sha256OfBytes(copy) !== ocr.sourceSha256) throw new Error("保存的 OCR 原件副本已变化，请重新导入；不能将当前文件当作识别时原件。");
+      return { question, text: "" };
+    }
     const root = statSync(draft.source).isDirectory() ? draft.source : dirname(draft.source);
     const source = readFileSync(resolvePublicAttachment(root, relative(root, question.sourceFile)));
     if (!question.sourceDigest || sha256OfText(source.toString("base64")) !== question.sourceDigest) throw new Error("来源文件已变化或缺少摘要，请重新导入；不能将当前文件当作导入时原文。");
     return { question, text: source.toString("utf8") };
+  }
+
+  /** OCR 草稿的对照文本：逐页识别原文 + 页码 + box 坐标证据（不读二进制）。 */
+  private ocrSourceText(draft: DraftDataset): string {
+    const ocr = draft.ocr!;
+    this.currentSource(draft, 0); // 验证保存原件副本摘要
+    const dir = dirname(this.draftPath(draft.draftId));
+    const lines: string[] = [];
+    lines.push("【逐页 OCR 识别原文】识别文本可能有误差，请以保存原件为准；坐标为归一化 0..1000。");
+    if (ocr.sourcePath.toLowerCase().endsWith(".pdf")) lines.push("【注意】PDF 页面位图未提取，请对照原PDF核对题面与配图。");
+    if (ocr.error) lines.push(`【识别状态】${ocr.status}（${ocr.error.message}）`);
+    const boxLines: string[] = [];
+    for (const page of ocr.pages ?? []) {
+      const file = join(dir, `page-${page.index}.txt`);
+      const pageText = existsSync(file) ? readFileSync(file, "utf8") : "（逐页原文缺失）";
+      lines.push("", `──── 第 ${page.index + 1} 页（finish_reason=${page.finishReason}） ────`, pageText.trimEnd());
+      for (const box of page.boxes) boxLines.push(`第 ${page.index + 1} 页 「${box.ref}」 [[${box.box.join(",")}]]`);
+    }
+    if (boxLines.length) lines.push("", "【坐标证据】", ...boxLines);
+    return lines.join("\n");
   }
 
   /** 原文为完整来源文件，模型预览与真实请求共用同一构建函数，评分单独展示。 */
@@ -416,8 +605,13 @@ export class ImportService {
     if (!draft || !draft.questions[index]) throw new Error("草稿或所选题目不存在。");
     const q = draft.questions[index]!;
     let sourceText = "", sourceError: string | undefined;
-    try { sourceText = this.currentSource(draft, index).text; }
-    catch (error) { sourceError = (error as Error).message; }
+    if (draft.format === "ocr") {
+      try { sourceText = this.ocrSourceText(draft); }
+      catch (error) { sourceError = (error as Error).message; }
+    } else {
+      try { sourceText = this.currentSource(draft, index).text; }
+      catch (error) { sourceError = (error as Error).message; }
+    }
     let modelText: string;
     try { modelText = buildUserContent(publicQuestion(q)); }
     catch (error) { modelText = `公开题面校验失败，请编辑修正：${(error as Error).message}\n\n当前草稿题干：\n${q.stem}`; }
@@ -437,7 +631,8 @@ export class ImportService {
     let edited: DraftQuestion;
     if (field === "stem") {
       if (!text.trim()) throw new Error("题面不能为空。");
-      edited = { ...question, stem: text };
+      // OCR 题干经人工编辑保存即表示该题识别歧义已核对（revision 另存）。
+      edited = { ...question, stem: text, ...(draft.format === "ocr" ? { ocrCheckedAt: new Date().toISOString() } : {}) };
     } else if (field === "metadata") {
       const metadata = MetadataSchema.parse(JSON.parse(text));
       edited = { ...metadata, stem: question.stem, scoring: question.scoring, sourceFile: question.sourceFile,
@@ -511,6 +706,11 @@ export class ImportService {
     const draft = this.getDraft(draftId);
     if (!draft) throw new Error(`draft not found: ${draftId}`);
     if (draft.status !== "draft") throw new Error(`draft already ${draft.status}`);
+    if (draft.format === "ocr" && (!draft.ocr || draft.ocr.status !== "completed")) {
+      const status = draft.ocr?.status ?? "缺少识别元数据";
+      throw new Error(`OCR 识别未完成（${status}），不能入库。` +
+        (draft.ocr?.error?.outcomeUnknown ? "上传可能已在服务端处理并计费，请核对供应商记录后决定。" : "请重新导入或修正后确认。"));
+    }
     const datasetId = validateImportId(draft.version === "1" ? draft.datasetId : `${draft.datasetId}.v${draft.version}`);
     const target = resolveWithin(this.datasetsRoot, datasetId);
     if (existsSync(target)) {
